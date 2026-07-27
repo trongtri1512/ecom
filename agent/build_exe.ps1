@@ -12,10 +12,12 @@ function Write-Step($n, $msg) { Write-Host "`n[$n] $msg" -ForegroundColor Cyan }
 
 # --- Tìm Python; nếu chưa có thì cài qua winget ---
 function Get-PythonCmd {
-    foreach ($c in @("python", "py")) {
+    # Ưu tiên 'py' (Python Launcher) vì luôn có sau khi cài Python trên Windows,
+    # kể cả khi 'python' KHÔNG được thêm vào PATH.
+    foreach ($c in @("py", "python")) {
         try {
             $v = & $c --version 2>&1
-            if ($LASTEXITCODE -eq 0 -and $v -match "Python 3") { return $c }
+            if ($LASTEXITCODE -eq 0 -and "$v" -match "Python 3") { return $c }
         } catch {}
     }
     return $null
