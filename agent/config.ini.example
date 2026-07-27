@@ -1,0 +1,18 @@
+[server]
+; URL backend (Dokploy). KHÔNG có dấu / ở cuối.
+url = https://scan.example.com
+; API key phải khớp biến API_KEY của backend.
+api_key = change-me
+
+[agent]
+; Tên máy quét này (hiện ở cột "Nguồn" trong web app).
+name = quầy-đóng-gói-1
+
+[scanner]
+; Ngưỡng phân biệt "quét" vs "gõ tay": nếu khoảng cách giữa 2 phím < giá trị này
+; (giây) thì coi là do máy quét gõ. Máy quét gõ rất nhanh (~0.01-0.03s/ký tự).
+inter_key_timeout = 0.05
+; Độ dài tối thiểu của 1 mã hợp lệ (bỏ qua chuỗi quá ngắn khi gõ tay lạc).
+min_length = 6
+; Bật/tắt tiếng bíp phản hồi.
+beep = true

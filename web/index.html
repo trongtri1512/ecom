@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scan Ecom — Quản lý mã vận đơn</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">📦 Scan Ecom <span class="sub">Quản lý mã vận đơn</span></div>
+    <div class="status">
+      <span id="conn" class="dot dot-off" title="Trạng thái realtime"></span>
+      <span id="connText">Đang kết nối…</span>
+    </div>
+  </header>
+
+  <!-- Thẻ KPI: Total + theo ĐVVC -->
+  <section id="kpis" class="kpis"></section>
+
+  <!-- Thanh công cụ -->
+  <section class="toolbar">
+    <input id="search" type="search" placeholder="🔍 Tìm theo mã vận đơn…" />
+    <select id="filterCarrier"><option value="">— Tất cả ĐVVC —</option></select>
+    <select id="filterPeriod" title="Lọc theo thời gian quét">
+      <option value="all">— Tất cả thời gian —</option>
+      <option value="day">Hôm nay</option>
+      <option value="week">Tuần này</option>
+      <option value="month">Tháng này</option>
+      <option value="quarter">Quý này</option>
+      <option value="year">Năm nay</option>
+    </select>
+    <span class="spacer"></span>
+    <button id="btnCarriers" class="btn btn-ghost" title="Thêm/sửa quy tắc nhận diện ĐVVC">⚙️ Quản lý ĐVVC</button>
+    <button id="btnReclassify" class="btn btn-ghost" title="Chạy lại nhận diện ĐVVC cho toàn bộ mã">↻ Phân loại lại</button>
+    <button id="btnCsv" class="btn">Xuất CSV</button>
+    <button id="btnXlsx" class="btn btn-primary">Xuất Excel</button>
+  </section>
+
+  <!-- Bảng danh sách -->
+  <section class="tablewrap">
+    <table id="tbl">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Mã vận đơn</th>
+          <th>ĐVVC</th>
+          <th>NCC</th>
+          <th>Ghi chú</th>
+          <th>Thời gian quét</th>
+          <th>Nguồn</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div id="empty" class="empty" hidden>Chưa có mã nào. Quét thử một mã đi!</div>
+  </section>
+
+  <div id="toasts" class="toasts"></div>
+
+  <!-- Modal quản lý ĐVVC -->
+  <div id="carrierModal" class="modal" hidden>
+    <div class="modal-box">
+      <div class="modal-head">
+        <h2>⚙️ Quản lý Đơn vị vận chuyển</h2>
+        <button id="closeCarrier" class="icon-btn" title="Đóng">✕</button>
+      </div>
+      <p class="modal-hint">
+        Gõ <b>prefix</b> = chuỗi ký tự <b>đầu mã vận đơn</b> (ví dụ <code>SPXVN</code>, <code>8621</code>, <code>GYAB</code>).
+        Mã bắt đầu bằng prefix nào thì thuộc ĐVVC đó. <b>Ưu tiên</b> nhỏ được xét trước —
+        để prefix dài hơn ưu tiên nhỏ hơn. Sửa xong bấm <b>Lưu &amp; phân loại lại</b>.
+      </p>
+      <table class="carrier-table">
+        <thead>
+          <tr><th>Tên ĐVVC</th><th>Prefix (đầu mã)</th><th>Ưu tiên</th><th></th></tr>
+        </thead>
+        <tbody id="carrierRows"></tbody>
+      </table>
+      <div class="carrier-add">
+        <input id="newName" placeholder="Tên ĐVVC mới (vd: Lazada)" />
+        <input id="newPrefix" placeholder="Prefix (vd: LZD)" />
+        <input id="newPriority" type="number" value="100" title="Ưu tiên (nhỏ xét trước)" />
+        <button id="btnAddCarrier" class="btn btn-primary">➕ Thêm</button>
+      </div>
+      <div class="modal-foot">
+        <button id="btnSaveReclassify" class="btn btn-primary">💾 Lưu &amp; phân loại lại toàn bộ</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

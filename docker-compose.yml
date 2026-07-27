@@ -1,0 +1,43 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-scan}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scan}
+      POSTGRES_DB: ${POSTGRES_DB:-scan}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-scan}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-scan}:${POSTGRES_PASSWORD:-scan}@db:5432/${POSTGRES_DB:-scan}
+      API_KEY: ${API_KEY:-change-me}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      DUP_GRACE_SECONDS: ${DUP_GRACE_SECONDS:-60}
+      MAIL_ENABLED: ${MAIL_ENABLED:-true}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_TLS: ${SMTP_TLS:-true}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+    ports:
+      # Dokploy sẽ reverse-proxy domain vào cổng này. Đổi trái nếu trùng cổng.
+      - "${APP_PORT:-8000}:8000"
+
+volumes:
+  db_data:

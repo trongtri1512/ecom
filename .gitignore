@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Secrets & local state
+.env
+agent/config.ini
+agent/queue.db
+*.db
+
+# OS
+.DS_Store
