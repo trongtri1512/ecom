@@ -37,6 +37,14 @@ try:
 except Exception:  # noqa: BLE001
     HAS_TRAY = False
 
+# tkinter (giao diện cửa sổ) — có sẵn trong Python chuẩn trên Windows.
+try:
+    import tkinter as tk
+    from tkinter import ttk
+    HAS_GUI = True
+except Exception:  # noqa: BLE001
+    HAS_GUI = False
+
 
 def _app_dir():
     """Thư mục chứa config.ini / queue.db.
@@ -66,6 +74,7 @@ def load_config():
         "url": cfg.get("server", "url").rstrip("/"),
         "api_key": cfg.get("server", "api_key"),
         "name": cfg.get("agent", "name", fallback="scanner"),
+        "show_window": cfg.getboolean("agent", "show_window", fallback=True),
         "inter_key_timeout": cfg.getfloat("scanner", "inter_key_timeout", fallback=0.05),
         "min_length": cfg.getint("scanner", "min_length", fallback=6),
         "beep": cfg.getboolean("scanner", "beep", fallback=True),
@@ -280,25 +289,174 @@ def run_tray(state):
         n = state["oq"].count()
         icon.notify(f"Đang chờ gửi lại: {n} mã", "Scan Ecom")
 
+    def open_window(icon, item):
+        win = state.get("window")
+        if win is not None:
+            # gọi trên thread GUI cho an toàn
+            win.root.after(0, win.show)
+
     def quit_app(icon, item):
         icon.stop()
         os._exit(0)
 
-    menu = pystray.Menu(
+    items = []
+    if state.get("window") is not None:
+        items.append(pystray.MenuItem("Mở cửa sổ", open_window, default=True))
+    items += [
         pystray.MenuItem(lambda item: "Tạm dừng" if state["catcher"].enabled else "Bật lại", toggle),
         pystray.MenuItem("Mở web quản lý", open_web),
         pystray.MenuItem("Trạng thái hàng đợi", show_status),
         pystray.MenuItem("Thoát", quit_app),
-    )
+    ]
+    menu = pystray.Menu(*items)
     icon = pystray.Icon("scan_ecom", make_icon_image((34, 197, 94)), "Scan Ecom — Đang bật", menu)
+    state["tray_icon"] = icon
     icon.run()
+
+
+# ----------------------------- Cửa sổ giao diện (tkinter) -----------------------------
+class AgentWindow:
+    """Cửa sổ hiển thị trên máy quét: mã vừa quét, trạng thái, nút điều khiển.
+
+    tkinter phải chạy trên MAIN THREAD. Các thread khác (quét, gửi) đẩy sự kiện
+    vào hàng đợi; cửa sổ tự đọc định kỳ để cập nhật -> an toàn luồng.
+    """
+
+    COLORS = {
+        "ok": "#16a34a",       # xanh - thêm mới thành công
+        "ignored": "#f59e0b",  # vàng - quét lại <1p, bỏ qua
+        "dup": "#ef4444",      # đỏ - trùng >1p
+        "err": "#ef4444",
+        "net": "#3b82f6",      # xanh dương - mất mạng, đã xếp hàng
+    }
+    LABELS = {
+        "ok": "✔ Đã thêm",
+        "ignored": "• Quét lại (<1p)",
+        "dup": "✖ TRÙNG",
+        "err": "! Lỗi",
+        "net": "⇄ Chờ gửi (mất mạng)",
+    }
+
+    def __init__(self, cfg, state, event_queue):
+        self.cfg = cfg
+        self.state = state
+        self.q = event_queue
+        self.count_session = 0
+
+        self.root = tk.Tk()
+        self.root.title("Scan Ecom — Máy quét")
+        self.root.geometry("560x460")
+        self.root.configure(bg="#0f172a")
+        self.root.minsize(460, 360)
+
+        # Header: tên máy + server
+        top = tk.Frame(self.root, bg="#1e293b")
+        top.pack(fill="x")
+        tk.Label(top, text="📦 Scan Ecom", fg="#e2e8f0", bg="#1e293b",
+                 font=("Segoe UI", 14, "bold")).pack(side="left", padx=12, pady=10)
+        self.status_lbl = tk.Label(top, text="● Đang kết nối…", fg="#94a3b8", bg="#1e293b",
+                                   font=("Segoe UI", 10))
+        self.status_lbl.pack(side="right", padx=12)
+
+        info = tk.Frame(self.root, bg="#0f172a")
+        info.pack(fill="x", padx=12, pady=(8, 4))
+        tk.Label(info, text=f"Máy: {cfg['name']}    Server: {cfg['url']}",
+                 fg="#94a3b8", bg="#0f172a", font=("Segoe UI", 9)).pack(side="left")
+
+        # Đếm phiên
+        self.count_lbl = tk.Label(self.root, text="Đã quét (phiên này): 0",
+                                  fg="#e2e8f0", bg="#0f172a", font=("Segoe UI", 11, "bold"))
+        self.count_lbl.pack(anchor="w", padx=12, pady=(2, 6))
+
+        # Danh sách mã vừa quét
+        listwrap = tk.Frame(self.root, bg="#0f172a")
+        listwrap.pack(fill="both", expand=True, padx=12)
+        self.listbox = tk.Listbox(listwrap, bg="#111c30", fg="#e2e8f0",
+                                  font=("Consolas", 11), borderwidth=0,
+                                  highlightthickness=0, selectbackground="#334155",
+                                  activestyle="none")
+        self.listbox.pack(side="left", fill="both", expand=True)
+        sb = tk.Scrollbar(listwrap, command=self.listbox.yview)
+        sb.pack(side="right", fill="y")
+        self.listbox.config(yscrollcommand=sb.set)
+
+        # Nút điều khiển
+        btns = tk.Frame(self.root, bg="#0f172a")
+        btns.pack(fill="x", padx=12, pady=10)
+        self.toggle_btn = tk.Button(btns, text="⏸ Tạm dừng", command=self._toggle,
+                                    bg="#263449", fg="#e2e8f0", relief="flat",
+                                    font=("Segoe UI", 10), padx=10, pady=4)
+        self.toggle_btn.pack(side="left")
+        tk.Button(btns, text="🌐 Mở web quản lý", command=self._open_web,
+                  bg="#263449", fg="#e2e8f0", relief="flat",
+                  font=("Segoe UI", 10), padx=10, pady=4).pack(side="left", padx=8)
+        tk.Button(btns, text="Ẩn xuống khay", command=self._hide,
+                  bg="#263449", fg="#e2e8f0", relief="flat",
+                  font=("Segoe UI", 10), padx=10, pady=4).pack(side="right")
+
+        # Đóng (X) = ẩn xuống khay, KHÔNG thoát agent.
+        self.root.protocol("WM_DELETE_WINDOW", self._hide)
+        self._poll()
+
+    def _toggle(self):
+        c = self.state["catcher"]
+        c.enabled = not c.enabled
+        self.toggle_btn.config(text="▶ Bật lại" if not c.enabled else "⏸ Tạm dừng")
+
+    def _open_web(self):
+        import webbrowser
+        webbrowser.open(self.cfg["url"])
+
+    def _hide(self):
+        self.root.withdraw()  # ẩn cửa sổ; agent vẫn chạy ngầm
+
+    def show(self):
+        self.root.deiconify()
+        self.root.lift()
+
+    def _poll(self):
+        # Đọc sự kiện quét từ hàng đợi, cập nhật danh sách.
+        try:
+            while True:
+                ev = self.q.get_nowait()
+                self._add_row(ev)
+        except Exception:  # queue.Empty
+            pass
+        # Cập nhật trạng thái kết nối + hàng đợi offline.
+        pending = self.state["oq"].count()
+        if pending > 0:
+            self.status_lbl.config(text=f"⚠ Chờ gửi lại: {pending} mã", fg="#f59e0b")
+        else:
+            self.status_lbl.config(text="● Sẵn sàng", fg="#22c55e")
+        self.root.after(400, self._poll)
+
+    def _add_row(self, ev):
+        code, result = ev["code"], ev["result"]
+        t = time.strftime("%H:%M:%S")
+        label = self.LABELS.get(result, result)
+        self.listbox.insert(0, f"{t}   {label:22s} {code}")
+        self.listbox.itemconfig(0, fg=self.COLORS.get(result, "#e2e8f0"))
+        # Giữ tối đa 300 dòng.
+        if self.listbox.size() > 300:
+            self.listbox.delete(300, "end")
+        if result in ("ok",):
+            self.count_session += 1
+            self.count_lbl.config(text=f"Đã quét (phiên này): {self.count_session}")
+
+    def run(self):
+        self.root.mainloop()
 
 
 # ----------------------------- main -----------------------------
 def main():
+    import queue as _queue
+
     cfg = load_config()
     oq = OfflineQueue(QUEUE_DB)
     sender = Sender(cfg, oq)
+
+    # Hàng đợi sự kiện để đẩy kết quả quét sang cửa sổ GUI (an toàn luồng).
+    ui_events = _queue.Queue()
 
     def handle_code(code):
         result = sender.send(code)
@@ -320,8 +478,11 @@ def main():
             print(f"[lỗi] {code}")
             if cfg["beep"]:
                 beep("err")
+        # Đẩy sang cửa sổ GUI (nếu có).
+        ui_events.put({"code": code, "result": result})
 
     catcher = ScanCatcher(cfg, handle_code)
+    state = {"cfg": cfg, "catcher": catcher, "oq": oq, "window": None}
 
     # Chạy nền: gửi lại mã offline.
     threading.Thread(target=sender.flush_loop, daemon=True).start()
@@ -331,11 +492,19 @@ def main():
     listener.start()
 
     print(f"Scanner Agent đang chạy. Server: {cfg['url']}  |  Máy: {cfg['name']}")
-    print("Quét mã ở bất kỳ đâu — không cần focus vào cửa sổ nào. Ctrl+C để thoát (console).")
 
-    if HAS_TRAY:
-        state = {"cfg": cfg, "catcher": catcher, "oq": oq}
-        run_tray(state)  # blocking; menu Thoát sẽ os._exit
+    # --- Điều phối GUI + Tray ---
+    if HAS_GUI:
+        # Cửa sổ chạy trên MAIN THREAD; tray chạy thread nền.
+        window = AgentWindow(cfg, state, ui_events)
+        state["window"] = window
+        if not cfg.get("show_window", True):
+            window._hide()  # khởi động thẳng xuống khay
+        if HAS_TRAY:
+            threading.Thread(target=run_tray, args=(state,), daemon=True).start()
+        window.run()  # blocking (mainloop). Đóng X -> ẩn xuống khay.
+    elif HAS_TRAY:
+        run_tray(state)  # không có GUI -> chỉ tray (blocking)
     else:
         try:
             listener.join()

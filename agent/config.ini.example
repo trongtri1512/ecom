@@ -7,6 +7,9 @@ api_key = change-me
 [agent]
 ; Tên máy quét này (hiện ở cột "Nguồn" trong web app).
 name = quầy-đóng-gói-1
+; Có mở cửa sổ giao diện lúc khởi động không? (true = hiện cửa sổ, false = chạy
+; thẳng xuống khay, mở cửa sổ sau bằng cách nhấp đúp icon khay).
+show_window = true
 
 [scanner]
 ; Ngưỡng phân biệt "quét" vs "gõ tay": nếu khoảng cách giữa 2 phím < giá trị này

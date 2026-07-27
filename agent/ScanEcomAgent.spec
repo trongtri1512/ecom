@@ -10,8 +10,8 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[],
-    # pystray/PIL nạp backend động -> khai báo để PyInstaller gom đủ.
-    hiddenimports=['pystray._win32', 'PIL._tkinter_finder'],
+    # pystray/PIL nạp backend động; tkinter cho cửa sổ GUI -> khai báo để gom đủ.
+    hiddenimports=['pystray._win32', 'PIL._tkinter_finder', 'tkinter', 'tkinter.ttk'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
