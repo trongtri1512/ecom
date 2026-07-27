@@ -39,9 +39,19 @@ Vào web app xem mã đã lên danh sách.
 Không muốn cài Python trên từng máy quét? Build 1 lần thành `ScanEcomAgent.exe`
 rồi chép chạy trên mọi máy Windows.
 
-**Build (làm 1 lần, trên 1 máy có Python):**
-1. Mở thư mục `agent`, chạy **`build_exe.bat`** (nhấp đúp).
-2. Xong sẽ có file **`dist\ScanEcomAgent.exe`**.
+**Build (làm 1 lần) — cách đơn giản nhất, KHÔNG cần cài sẵn Python:**
+
+Mở **PowerShell** tại thư mục `agent`, chạy:
+```powershell
+powershell -ExecutionPolicy Bypass -File build_exe.ps1
+```
+Script tự làm hết: **cài Python bằng winget nếu máy chưa có** → tạo môi trường →
+cài thư viện → build ra **`dist\ScanEcomAgent.exe`**.
+
+> Nếu winget vừa cài Python xong mà báo "chưa thấy Python": đóng PowerShell, mở
+> lại, chạy lệnh trên lần nữa (Windows cần nạp lại PATH).
+
+*(Cách cũ nếu đã có sẵn Python: nhấp đúp **`build_exe.bat`**.)*
 
 **Chạy trên máy quét:**
 1. Chép **`ScanEcomAgent.exe`** + **`config.ini`** (đã sửa `url`, `api_key`) vào

@@ -11,5 +11,10 @@ agent/config.ini
 agent/queue.db
 *.db
 
+# Build output
+dist/
+build/
+*.zip
+
 # OS
 .DS_Store
