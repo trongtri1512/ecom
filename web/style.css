@@ -89,6 +89,15 @@ td.code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-weight: 6
 .icon-btn:hover { opacity: 1; }
 .empty { text-align: center; color: var(--muted); padding: 48px; }
 
+/* Dòng bị quét trùng */
+tr.row-dup { background: rgba(239, 68, 68, .10); }
+tr.row-dup:hover { background: rgba(239, 68, 68, .16); }
+.dup-badge {
+  display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; background: rgba(239,68,68,.18);
+  color: #fca5a5; border: 1px solid var(--danger); vertical-align: middle;
+}
+
 /* Toasts */
 .toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 50; }
 .toast {

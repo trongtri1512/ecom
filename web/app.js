@@ -70,9 +70,14 @@ async function loadSummary() {
 /* ------------------------- Bảng ------------------------- */
 function rowHtml(r, idx) {
   const isOther = r.carrier === "Other";
-  return `<tr data-id="${r.id}">
+  const dup = r.dup_count || 0;
+  // Dòng bị quét trùng: tô nền cảnh báo + badge số lần trùng cạnh mã.
+  const dupBadge = dup > 0
+    ? ` <span class="dup-badge" title="Đã bị quét trùng ${dup} lần (gần nhất: ${fmtTime(r.last_dup_at)})">⚠ trùng ×${dup}</span>`
+    : "";
+  return `<tr data-id="${r.id}" class="${dup > 0 ? "row-dup" : ""}">
     <td>${idx}</td>
-    <td class="code">${escapeHtml(r.code)}</td>
+    <td class="code">${escapeHtml(r.code)}${dupBadge}</td>
     <td><span class="badge ${isOther ? "other" : ""}">${escapeHtml(r.carrier)}</span></td>
     <td><input class="cell-edit" data-field="supplier" value="${escapeAttr(r.supplier || "")}" placeholder="—" /></td>
     <td><input class="cell-edit" data-field="note" value="${escapeAttr(r.note || "")}" placeholder="—" /></td>
@@ -126,15 +131,28 @@ rowsEl.addEventListener("click", async (e) => {
   if (!del) return;
   const tr = del.closest("tr");
   const id = tr.dataset.id;
-  const code = tr.querySelector(".code").textContent;
+  // Lấy mã sạch (bỏ badge trùng): text node đầu của ô .code.
+  const codeCell = tr.querySelector(".code");
+  const code = (codeCell.firstChild ? codeCell.firstChild.textContent : codeCell.textContent).trim();
   if (!confirm(`Xoá mã ${code}?`)) return;
+  // Hỏi mật khẩu xoá; server sẽ kiểm (không lưu pass ở client).
+  const pass = prompt("Nhập mật khẩu để xoá:");
+  if (pass === null) return;  // bấm Cancel
   try {
-    await api(`/api/scans/${id}`, { method: "DELETE" });
+    await api(`/api/scans/${id}`, {
+      method: "DELETE",
+      headers: { "X-Delete-Password": pass },
+    });
     tr.remove();
     loadSummary();
     toast("Đã xoá", code, "warn");
   } catch (err) {
-    toast("Lỗi xoá", String(err), "danger");
+    // 403 = sai pass.
+    if (String(err).includes("mật khẩu") || String(err).includes("403")) {
+      toast("Sai mật khẩu", "Không xoá được", "danger");
+    } else {
+      toast("Lỗi xoá", String(err), "danger");
+    }
   }
 });
 
@@ -272,7 +290,9 @@ function connectStream() {
   });
   es.addEventListener("duplicate", (e) => {
     const r = JSON.parse(e.data);
-    toast("⚠️ Mã TRÙNG bị chặn", `${r.code} (${r.carrier}) — đã báo email Admin`, "warn");
+    const lan = r.dup_count ? ` (lần ${r.dup_count})` : "";
+    toast("⚠️ Mã TRÙNG", `${r.code} (${r.carrier})${lan} — đã đánh dấu + báo email`, "warn");
+    refresh();  // cập nhật badge trùng trên dòng gốc
   });
   es.addEventListener("update", refresh);
   es.addEventListener("delete", refresh);

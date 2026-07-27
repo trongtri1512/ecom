@@ -38,3 +38,6 @@ MAIL_ENABLED = _get("MAIL_ENABLED", "true").lower() in ("1", "true", "yes")
 # ĐẦU TIÊN của một mã, quét lại sẽ bị bỏ qua ÊM (không lưu, không email, không
 # cảnh báo). Sau khoảng này, quét lại mới tính là TRÙNG. Mặc định 60s.
 DUP_GRACE_SECONDS = int(_get("DUP_GRACE_SECONDS", "60") or "60")
+
+# Mật khẩu xác nhận khi XOÁ dòng (kiểm ở server). Đổi trong .env.
+DELETE_PASSWORD = _get("DELETE_PASSWORD", "1512")

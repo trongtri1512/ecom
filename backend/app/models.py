@@ -27,6 +27,9 @@ class Scan(Base):
     scanned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     source_agent: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # Đánh dấu bị quét trùng: số lần quét lại (sau cửa sổ ân hạn) + thời điểm gần nhất.
+    dup_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_dup_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     def as_dict(self) -> dict:
         return {
@@ -38,6 +41,8 @@ class Scan(Base):
             "scanned_at": self.scanned_at.isoformat() if self.scanned_at else None,
             "source_agent": self.source_agent,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "dup_count": self.dup_count or 0,
+            "last_dup_at": self.last_dup_at.isoformat() if self.last_dup_at else None,
         }
 
 

@@ -7,7 +7,7 @@ from openpyxl import Workbook
 
 from .models import Scan
 
-_HEADERS = ["Mã vận đơn", "ĐVVC", "NCC", "Ghi chú", "Thời gian quét", "Nguồn"]
+_HEADERS = ["Mã vận đơn", "ĐVVC", "NCC", "Ghi chú", "Thời gian quét", "Nguồn", "Số lần trùng"]
 
 
 def _row(s: Scan) -> list:
@@ -18,6 +18,7 @@ def _row(s: Scan) -> list:
         s.note or "",
         s.scanned_at.strftime("%Y-%m-%d %H:%M:%S") if s.scanned_at else "",
         s.source_agent or "",
+        s.dup_count or 0,
     ]
 
 

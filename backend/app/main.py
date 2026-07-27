@@ -110,7 +110,7 @@ def create_scan(
     # Chống trùng: kiểm tra trước cho phản hồi thân thiện.
     existing = db.scalar(select(Scan).where(Scan.code == code))
     if existing:
-        return _handle_existing(existing, code, payload, background)
+        return _handle_existing(existing, code, payload, background, db)
 
     scan = Scan(
         code=code,
@@ -126,7 +126,7 @@ def create_scan(
         db.rollback()
         dup = db.scalar(select(Scan).where(Scan.code == code))
         if dup:
-            return _handle_existing(dup, code, payload, background)
+            return _handle_existing(dup, code, payload, background, db)
         raise HTTPException(status_code=409, detail=f"Mã trùng: {code}")
     db.refresh(scan)
 
@@ -142,21 +142,28 @@ def _seconds_since(scanned_at: datetime) -> float:
     return (now - scanned_at).total_seconds()
 
 
-def _handle_existing(existing: Scan, code: str, payload: ScanIn, background: BackgroundTasks):
+def _handle_existing(existing: Scan, code: str, payload: ScanIn, background: BackgroundTasks, db: Session):
     """Mã đã tồn tại: trong cửa sổ grace -> bỏ qua ÊM; ngoài -> tính TRÙNG.
 
     - <= DUP_GRACE_SECONDS kể từ lần quét đầu: trả 200 status "ignored",
       KHÔNG email, KHÔNG cảnh báo (nhân viên lỡ quét lại ngay).
-    - > DUP_GRACE_SECONDS: trả 409, gửi email Admin + phát sự kiện duplicate
-      (agent kêu cảnh báo tại máy local).
+    - > DUP_GRACE_SECONDS: KHÔNG thêm dòng mới, mà ĐÁNH DẤU dòng gốc bị trùng
+      (tăng dup_count + last_dup_at), trả 409, gửi email Admin + phát sự kiện
+      duplicate (agent kêu cảnh báo tại máy local).
     """
     if _seconds_since(existing.scanned_at) <= config.DUP_GRACE_SECONDS:
         # Trong 1 phút: im lặng, coi như quét lại vô hại.
         return {"status": "ignored", "code": code, "carrier": existing.carrier}
-    # Quá 1 phút: tính trùng thật.
+    # Quá 1 phút: đánh dấu trùng trên dòng gốc.
+    existing.dup_count = (existing.dup_count or 0) + 1
+    existing.last_dup_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(existing)
     background.add_task(send_duplicate_alert, code, existing.carrier, payload.source_agent)
-    events.publish("duplicate", {"code": code, "carrier": existing.carrier})
-    raise HTTPException(status_code=409, detail=f"Mã trùng: {code}")
+    events.publish("duplicate", {"code": code, "carrier": existing.carrier, "dup_count": existing.dup_count})
+    # Cập nhật dòng gốc trên web (để badge số lần trùng nhảy realtime).
+    events.publish("update", existing.as_dict())
+    raise HTTPException(status_code=409, detail=f"Mã trùng: {code} (lần {existing.dup_count})")
 
 
 # ----------------------------- Đọc / quản lý -----------------------------
@@ -220,7 +227,14 @@ def update_scan(scan_id: int, payload: ScanUpdate, db: Session = Depends(get_db)
 
 
 @app.delete("/api/scans/{scan_id}", status_code=204)
-def delete_scan(scan_id: int, db: Session = Depends(get_db)):
+def delete_scan(
+    scan_id: int,
+    db: Session = Depends(get_db),
+    x_delete_password: str = Header(default=""),
+):
+    # Kiểm mật khẩu xoá Ở SERVER (an toàn thật, không thể bỏ qua bằng Dev Tools).
+    if x_delete_password != config.DELETE_PASSWORD:
+        raise HTTPException(status_code=403, detail="Sai mật khẩu xoá")
     scan = db.get(Scan, scan_id)
     if not scan:
         raise HTTPException(status_code=404, detail="Không tìm thấy")
