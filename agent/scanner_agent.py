@@ -38,7 +38,19 @@ except Exception:  # noqa: BLE001
     HAS_TRAY = False
 
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+def _app_dir():
+    """Thư mục chứa config.ini / queue.db.
+
+    - Khi chạy dạng .exe (PyInstaller): lấy thư mục CHỨA file .exe, để người dùng
+      sửa config.ini cạnh .exe được (không phải thư mục temp bundle).
+    - Khi chạy .py bình thường: lấy thư mục chứa script.
+    """
+    if getattr(sys, "frozen", False):  # đang chạy trong bundle PyInstaller
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+HERE = _app_dir()
 CONFIG_PATH = os.path.join(HERE, "config.ini")
 QUEUE_DB = os.path.join(HERE, "queue.db")
 
@@ -190,7 +202,18 @@ class Sender:
 
 # ----------------------------- Bắt mã toàn cục -----------------------------
 class ScanCatcher:
-    """Gom ký tự do máy quét gõ; kết thúc ở Enter hoặc khi im lặng đủ lâu."""
+    """Gom ký tự do máy quét gõ; kết thúc ở Enter.
+
+    NHIỀU MÁY QUÉT trên cùng 1 máy tính (không cần phân biệt nguồn):
+    - Mọi máy quét đều "gõ" vào chung dòng bàn phím của Windows; agent nghe chung
+      nên nhận được mã từ TẤT CẢ máy quét, gộp vào cùng 1 danh sách. OK cho nhu cầu này.
+    - Rủi ro: nếu 2 người bấm quét gần như ĐỒNG THỜI, ký tự 2 mã có thể xen kẽ ->
+      tạo mã rác. Giảm rủi ro bằng 2 cơ chế:
+        1) Mỗi máy quét tự kết thúc mã bằng Enter -> flush ngay khi gặp Enter.
+        2) Nếu buffer có ký tự nhưng im lặng quá lâu (mất Enter / xen kẽ dở dang)
+           -> tự bỏ buffer để không dính sang mã kế tiếp.
+      Trong thực tế nên nhắc nhân viên quét LẦN LƯỢT (chênh nhau >0.2s) là an toàn tuyệt đối.
+    """
 
     def __init__(self, cfg, on_code):
         self.cfg = cfg
@@ -198,6 +221,8 @@ class ScanCatcher:
         self.buffer = []
         self.last_time = 0.0
         self.enabled = True
+        # Ngưỡng tự-bỏ buffer khi mất Enter (giây). Lớn hơn nhiều so với tốc độ quét.
+        self.stale_timeout = max(0.5, cfg["inter_key_timeout"] * 20)
 
     def _flush(self):
         code = "".join(self.buffer).strip()
@@ -212,8 +237,9 @@ class ScanCatcher:
         gap = now - self.last_time
         self.last_time = now
 
-        # Nếu ký tự đến chậm (gõ tay) -> reset buffer, bắt đầu lại.
-        if gap > self.cfg["inter_key_timeout"] and self.buffer:
+        # Ký tự đến sau một khoảng nghỉ dài (gõ tay lạc, hoặc mã trước mất Enter)
+        # -> coi buffer cũ là rác, bắt đầu mã mới sạch sẽ.
+        if gap > self.stale_timeout and self.buffer:
             self.buffer = []
 
         try:
