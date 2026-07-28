@@ -95,7 +95,18 @@ Tạo `~/Library/LaunchAgents/com.imv.scanecom.plist`:
 launchctl load ~/Library/LaunchAgents/com.imv.scanecom.plist
 ```
 
-## 4. Icon khay hệ thống
+## 4. Cửa sổ giao diện
+Khi chạy (nếu `show_window = true`), agent mở cửa sổ chia 2 phần:
+- **Bên trái (~1/3): Mã vừa quét** — danh sách realtime, tô màu: 🟢 đã thêm ·
+  🟡 quét lại <1p · 🔴 trùng.
+- **Bên phải (~2/3): Số lượng theo ĐVVC HÔM NAY** — thẻ Tổng nổi bật + từng ĐVVC
+  (SPX/J&T/Best/GHN…). Số liệu lấy từ **server** nên gồm **tất cả mã trong ngày**
+  (kể cả máy khác quét), **tự làm mới mỗi 5 giây** và ngay sau mỗi lần quét.
+- Nút: ⏸ Tạm dừng · 🌐 Web quản lý · Ẩn xuống khay.
+- Bấm **X = thu nhỏ xuống khay** (agent vẫn chạy ngầm), mở lại bằng nhấp đúp icon khay.
+
+## 5. Icon khay hệ thống
+- **Mở cửa sổ** (nhấp đúp icon).
 - **Tạm dừng / Bật lại** bắt mã.
 - **Mở web quản lý**.
 - **Trạng thái hàng đợi** (bao nhiêu mã đang chờ gửi lại khi mất mạng).

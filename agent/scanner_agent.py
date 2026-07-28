@@ -194,6 +194,19 @@ class Sender:
             print(f"[offline] Mất mạng, xếp hàng: {code} (chờ gửi lại)")
         return result
 
+    def get_summary_today(self):
+        """Lấy thống kê HÔM NAY từ server: {total, by_carrier, carrier_order}.
+
+        Trả None nếu không gọi được (mất mạng / server lỗi).
+        """
+        try:
+            r = self.session.get(self.cfg["url"] + "/api/summary?period=day", timeout=8)
+            if r.status_code == 200:
+                return r.json()
+        except requests.RequestException:
+            pass
+        return None
+
     def flush_loop(self):
         """Chạy nền: định kỳ gửi lại các mã đang xếp hàng khi có mạng."""
         while True:
@@ -316,63 +329,66 @@ def run_tray(state):
 
 # ----------------------------- Cửa sổ giao diện (tkinter) -----------------------------
 class AgentWindow:
-    """Cửa sổ hiển thị trên máy quét: mã vừa quét, trạng thái, nút điều khiển.
+    """Cửa sổ trên máy quét: TRÁI (~1/3) danh sách mã vừa quét, PHẢI (~2/3) thống
+    kê số lượng theo ĐVVC trong NGÀY (lấy từ server, tự làm mới định kỳ).
 
-    tkinter phải chạy trên MAIN THREAD. Các thread khác (quét, gửi) đẩy sự kiện
-    vào hàng đợi; cửa sổ tự đọc định kỳ để cập nhật -> an toàn luồng.
+    tkinter phải chạy trên MAIN THREAD. Thread quét đẩy sự kiện vào hàng đợi;
+    việc gọi server lấy summary chạy ở thread nền để không treo giao diện.
     """
 
     COLORS = {
-        "ok": "#16a34a",       # xanh - thêm mới thành công
-        "ignored": "#f59e0b",  # vàng - quét lại <1p, bỏ qua
-        "dup": "#ef4444",      # đỏ - trùng >1p
-        "err": "#ef4444",
-        "net": "#3b82f6",      # xanh dương - mất mạng, đã xếp hàng
+        "ok": "#16a34a", "ignored": "#f59e0b", "dup": "#ef4444",
+        "err": "#ef4444", "net": "#3b82f6",
     }
     LABELS = {
-        "ok": "✔ Đã thêm",
-        "ignored": "• Quét lại (<1p)",
-        "dup": "✖ TRÙNG",
-        "err": "! Lỗi",
-        "net": "⇄ Chờ gửi (mất mạng)",
+        "ok": "✔ Đã thêm", "ignored": "• Quét lại (<1p)", "dup": "✖ TRÙNG",
+        "err": "! Lỗi", "net": "⇄ Chờ gửi",
     }
+    BG = "#0f172a"
+    PANEL = "#1e293b"
 
     def __init__(self, cfg, state, event_queue):
         self.cfg = cfg
         self.state = state
         self.q = event_queue
         self.count_session = 0
+        self._summary = None          # summary ngày mới nhất (dict) từ server
+        self._summary_lock = threading.Lock()
+        self._kpi_widgets = {}        # tên ĐVVC -> label giá trị
 
         self.root = tk.Tk()
         self.root.title("Scan Ecom — Máy quét")
-        self.root.geometry("560x460")
-        self.root.configure(bg="#0f172a")
-        self.root.minsize(460, 360)
+        self.root.geometry("900x560")
+        self.root.configure(bg=self.BG)
+        self.root.minsize(760, 460)
 
-        # Header: tên máy + server
-        top = tk.Frame(self.root, bg="#1e293b")
+        # ---- Header ----
+        top = tk.Frame(self.root, bg=self.PANEL)
         top.pack(fill="x")
-        tk.Label(top, text="📦 Scan Ecom", fg="#e2e8f0", bg="#1e293b",
+        tk.Label(top, text="📦 Scan Ecom", fg="#e2e8f0", bg=self.PANEL,
                  font=("Segoe UI", 14, "bold")).pack(side="left", padx=12, pady=10)
-        self.status_lbl = tk.Label(top, text="● Đang kết nối…", fg="#94a3b8", bg="#1e293b",
+        self.status_lbl = tk.Label(top, text="● Đang kết nối…", fg="#94a3b8", bg=self.PANEL,
                                    font=("Segoe UI", 10))
         self.status_lbl.pack(side="right", padx=12)
+        tk.Label(top, text=f"Máy: {cfg['name']}", fg="#94a3b8", bg=self.PANEL,
+                 font=("Segoe UI", 9)).pack(side="right", padx=12)
 
-        info = tk.Frame(self.root, bg="#0f172a")
-        info.pack(fill="x", padx=12, pady=(8, 4))
-        tk.Label(info, text=f"Máy: {cfg['name']}    Server: {cfg['url']}",
-                 fg="#94a3b8", bg="#0f172a", font=("Segoe UI", 9)).pack(side="left")
+        # ---- Thân: 2 cột (trái 1/3, phải 2/3) ----
+        body = tk.Frame(self.root, bg=self.BG)
+        body.pack(fill="both", expand=True, padx=12, pady=10)
+        body.columnconfigure(0, weight=1)   # trái ~1/3
+        body.columnconfigure(1, weight=2)   # phải ~2/3
+        body.rowconfigure(0, weight=1)
 
-        # Đếm phiên
-        self.count_lbl = tk.Label(self.root, text="Đã quét (phiên này): 0",
-                                  fg="#e2e8f0", bg="#0f172a", font=("Segoe UI", 11, "bold"))
-        self.count_lbl.pack(anchor="w", padx=12, pady=(2, 6))
-
-        # Danh sách mã vừa quét
-        listwrap = tk.Frame(self.root, bg="#0f172a")
-        listwrap.pack(fill="both", expand=True, padx=12)
+        # TRÁI: danh sách mã vừa quét
+        left = tk.Frame(body, bg=self.BG)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        tk.Label(left, text="MÃ VỪA QUÉT", fg="#94a3b8", bg=self.BG,
+                 font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 4))
+        listwrap = tk.Frame(left, bg=self.BG)
+        listwrap.pack(fill="both", expand=True)
         self.listbox = tk.Listbox(listwrap, bg="#111c30", fg="#e2e8f0",
-                                  font=("Consolas", 11), borderwidth=0,
+                                  font=("Consolas", 10), borderwidth=0,
                                   highlightthickness=0, selectbackground="#334155",
                                   activestyle="none")
         self.listbox.pack(side="left", fill="both", expand=True)
@@ -380,24 +396,51 @@ class AgentWindow:
         sb.pack(side="right", fill="y")
         self.listbox.config(yscrollcommand=sb.set)
 
-        # Nút điều khiển
-        btns = tk.Frame(self.root, bg="#0f172a")
-        btns.pack(fill="x", padx=12, pady=10)
+        # PHẢI: thống kê theo ĐVVC trong ngày
+        right = tk.Frame(body, bg=self.BG)
+        right.grid(row=0, column=1, sticky="nsew")
+        head = tk.Frame(right, bg=self.BG)
+        head.pack(fill="x")
+        tk.Label(head, text="SỐ LƯỢNG THEO ĐƠN VỊ VẬN CHUYỂN (HÔM NAY)",
+                 fg="#94a3b8", bg=self.BG, font=("Segoe UI", 9, "bold")).pack(side="left", pady=(0, 4))
+
+        # Thẻ Tổng (nổi bật)
+        total_card = tk.Frame(right, bg="#2563eb")
+        total_card.pack(fill="x", pady=(2, 10))
+        tk.Label(total_card, text="TỔNG ĐƠN HÔM NAY", fg="#dbeafe", bg="#2563eb",
+                 font=("Segoe UI", 10)).pack(anchor="w", padx=14, pady=(10, 0))
+        self.total_lbl = tk.Label(total_card, text="0", fg="white", bg="#2563eb",
+                                  font=("Segoe UI", 30, "bold"))
+        self.total_lbl.pack(anchor="w", padx=14, pady=(0, 10))
+
+        # Lưới thẻ theo ĐVVC (2 cột)
+        self.kpi_grid = tk.Frame(right, bg=self.BG)
+        self.kpi_grid.pack(fill="both", expand=True)
+        self.kpi_grid.columnconfigure(0, weight=1)
+        self.kpi_grid.columnconfigure(1, weight=1)
+
+        # ---- Nút điều khiển ----
+        btns = tk.Frame(self.root, bg=self.BG)
+        btns.pack(fill="x", padx=12, pady=(0, 10))
+        self.count_lbl = tk.Label(btns, text="Máy này (phiên): 0", fg="#e2e8f0", bg=self.BG,
+                                  font=("Segoe UI", 10, "bold"))
+        self.count_lbl.pack(side="left")
         self.toggle_btn = tk.Button(btns, text="⏸ Tạm dừng", command=self._toggle,
                                     bg="#263449", fg="#e2e8f0", relief="flat",
                                     font=("Segoe UI", 10), padx=10, pady=4)
-        self.toggle_btn.pack(side="left")
-        tk.Button(btns, text="🌐 Mở web quản lý", command=self._open_web,
+        self.toggle_btn.pack(side="right", padx=(8, 0))
+        tk.Button(btns, text="🌐 Web quản lý", command=self._open_web,
                   bg="#263449", fg="#e2e8f0", relief="flat",
-                  font=("Segoe UI", 10), padx=10, pady=4).pack(side="left", padx=8)
+                  font=("Segoe UI", 10), padx=10, pady=4).pack(side="right", padx=8)
         tk.Button(btns, text="Ẩn xuống khay", command=self._hide,
                   bg="#263449", fg="#e2e8f0", relief="flat",
                   font=("Segoe UI", 10), padx=10, pady=4).pack(side="right")
 
-        # Đóng (X) = ẩn xuống khay, KHÔNG thoát agent.
-        self.root.protocol("WM_DELETE_WINDOW", self._hide)
+        self.root.protocol("WM_DELETE_WINDOW", self._hide)  # X = ẩn xuống khay
         self._poll()
+        self._start_summary_loop()
 
+    # --- điều khiển ---
     def _toggle(self):
         c = self.state["catcher"]
         c.enabled = not c.enabled
@@ -408,40 +451,84 @@ class AgentWindow:
         webbrowser.open(self.cfg["url"])
 
     def _hide(self):
-        self.root.withdraw()  # ẩn cửa sổ; agent vẫn chạy ngầm
+        self.root.withdraw()
 
     def show(self):
         self.root.deiconify()
         self.root.lift()
 
+    # --- lấy summary ngày từ server (thread nền) ---
+    def _start_summary_loop(self):
+        def loop():
+            while True:
+                s = self.state["sender"].get_summary_today()
+                if s is not None:
+                    with self._summary_lock:
+                        self._summary = s
+                time.sleep(5)  # tự làm mới mỗi 5 giây
+        threading.Thread(target=loop, daemon=True).start()
+
+    def refresh_summary_now(self):
+        """Gọi ngay sau khi quét để số cập nhật nhanh (không đợi 5s)."""
+        def once():
+            s = self.state["sender"].get_summary_today()
+            if s is not None:
+                with self._summary_lock:
+                    self._summary = s
+        threading.Thread(target=once, daemon=True).start()
+
+    def _render_summary(self):
+        with self._summary_lock:
+            s = self._summary
+        if not s:
+            return
+        self.total_lbl.config(text=str(s.get("total", 0)))
+        order = s.get("carrier_order", [])
+        by = s.get("by_carrier", {})
+        # Tạo/ cập nhật thẻ cho từng ĐVVC.
+        for i, name in enumerate(order):
+            if name not in self._kpi_widgets:
+                card = tk.Frame(self.kpi_grid, bg=self.PANEL)
+                card.grid(row=i // 2, column=i % 2, sticky="nsew", padx=4, pady=4, ipady=6)
+                tk.Label(card, text=name, fg="#94a3b8", bg=self.PANEL,
+                         font=("Segoe UI", 9)).pack(anchor="w", padx=12, pady=(6, 0))
+                val = tk.Label(card, text="0", fg="#e2e8f0", bg=self.PANEL,
+                               font=("Segoe UI", 20, "bold"))
+                val.pack(anchor="w", padx=12, pady=(0, 6))
+                self._kpi_widgets[name] = val
+            self._kpi_widgets[name].config(text=str(by.get(name, 0)))
+
+    # --- vòng lặp cập nhật GUI ---
     def _poll(self):
-        # Đọc sự kiện quét từ hàng đợi, cập nhật danh sách.
         try:
             while True:
                 ev = self.q.get_nowait()
                 self._add_row(ev)
         except Exception:  # queue.Empty
             pass
-        # Cập nhật trạng thái kết nối + hàng đợi offline.
+        # trạng thái kết nối + hàng đợi offline
         pending = self.state["oq"].count()
         if pending > 0:
             self.status_lbl.config(text=f"⚠ Chờ gửi lại: {pending} mã", fg="#f59e0b")
         else:
             self.status_lbl.config(text="● Sẵn sàng", fg="#22c55e")
-        self.root.after(400, self._poll)
+        self._render_summary()
+        self.root.after(500, self._poll)
 
     def _add_row(self, ev):
         code, result = ev["code"], ev["result"]
         t = time.strftime("%H:%M:%S")
         label = self.LABELS.get(result, result)
-        self.listbox.insert(0, f"{t}   {label:22s} {code}")
+        self.listbox.insert(0, f"{t}  {label:14s} {code}")
         self.listbox.itemconfig(0, fg=self.COLORS.get(result, "#e2e8f0"))
-        # Giữ tối đa 300 dòng.
         if self.listbox.size() > 300:
             self.listbox.delete(300, "end")
-        if result in ("ok",):
+        if result == "ok":
             self.count_session += 1
-            self.count_lbl.config(text=f"Đã quét (phiên này): {self.count_session}")
+            self.count_lbl.config(text=f"Máy này (phiên): {self.count_session}")
+        # Sau mỗi lần quét -> cập nhật số ngày ngay.
+        if result in ("ok", "dup"):
+            self.refresh_summary_now()
 
     def run(self):
         self.root.mainloop()
@@ -482,7 +569,7 @@ def main():
         ui_events.put({"code": code, "result": result})
 
     catcher = ScanCatcher(cfg, handle_code)
-    state = {"cfg": cfg, "catcher": catcher, "oq": oq, "window": None}
+    state = {"cfg": cfg, "catcher": catcher, "oq": oq, "sender": sender, "window": None}
 
     # Chạy nền: gửi lại mã offline.
     threading.Thread(target=sender.flush_loop, daemon=True).start()
