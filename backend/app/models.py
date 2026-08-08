@@ -30,6 +30,9 @@ class Scan(Base):
     # Đánh dấu bị quét trùng: số lần quét lại (sau cửa sổ ân hạn) + thời điểm gần nhất.
     dup_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_dup_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Trạng thái lấy hàng của ĐVVC: "picked" (đã lấy) | "pending" (chưa lấy) | "" (chưa tra).
+    pickup_status: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    pickup_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     def as_dict(self) -> dict:
         return {
@@ -43,6 +46,8 @@ class Scan(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "dup_count": self.dup_count or 0,
             "last_dup_at": self.last_dup_at.isoformat() if self.last_dup_at else None,
+            "pickup_status": self.pickup_status or "",
+            "pickup_checked_at": self.pickup_checked_at.isoformat() if self.pickup_checked_at else None,
         }
 
 

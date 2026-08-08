@@ -23,17 +23,21 @@
     <input id="search" type="search" placeholder="🔍 Tìm theo mã vận đơn…" />
     <select id="filterCarrier"><option value="">— Tất cả ĐVVC —</option></select>
     <select id="filterPeriod" title="Lọc theo thời gian quét">
-      <option value="all">— Tất cả thời gian —</option>
-      <option value="day">Hôm nay</option>
+      <option value="day" selected>Hôm nay</option>
+      <option value="yesterday">Hôm trước</option>
       <option value="week">Tuần này</option>
+      <option value="last_week">Tuần trước</option>
       <option value="month">Tháng này</option>
+      <option value="last_month">Tháng trước</option>
       <option value="quarter">Quý này</option>
       <option value="year">Năm nay</option>
+      <option value="all">Tất cả</option>
     </select>
     <span class="spacer"></span>
+    <button id="btnTrack" class="btn btn-ghost" title="Tra trạng thái lấy hàng (SPX) cho các đơn hôm nay">🔎 Tra trạng thái</button>
     <button id="btnCarriers" class="btn btn-ghost" title="Thêm/sửa quy tắc nhận diện ĐVVC">⚙️ Quản lý ĐVVC</button>
     <button id="btnReclassify" class="btn btn-ghost" title="Chạy lại nhận diện ĐVVC cho toàn bộ mã">↻ Phân loại lại</button>
-    <button id="btnCsv" class="btn">Xuất CSV</button>
+    <button id="btnImport" class="btn" title="Xuất file Excel để import lên hệ thống (chỉ đơn đã lấy hàng)">📤 Xuất file import</button>
     <button id="btnXlsx" class="btn btn-primary">Xuất Excel</button>
   </section>
 
@@ -45,8 +49,7 @@
           <th>#</th>
           <th>Mã vận đơn</th>
           <th>ĐVVC</th>
-          <th>NCC</th>
-          <th>Ghi chú</th>
+          <th>Trạng thái</th>
           <th>Thời gian quét</th>
           <th>Nguồn</th>
           <th></th>

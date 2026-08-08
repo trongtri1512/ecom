@@ -37,6 +37,13 @@ try:
 except Exception:  # noqa: BLE001
     HAS_TRAY = False
 
+# ImageTk để hiển thị logo ĐVVC trong tkinter (tuỳ chọn).
+try:
+    from PIL import Image as _PILImage, ImageTk
+    HAS_IMAGETK = True
+except Exception:  # noqa: BLE001
+    HAS_IMAGETK = False
+
 # tkinter (giao diện cửa sổ) — có sẵn trong Python chuẩn trên Windows.
 try:
     import tkinter as tk
@@ -61,6 +68,31 @@ def _app_dir():
 HERE = _app_dir()
 CONFIG_PATH = os.path.join(HERE, "config.ini")
 QUEUE_DB = os.path.join(HERE, "queue.db")
+LOGOS_DIR = os.path.join(HERE, "logos")
+
+
+def _slugify_carrier(name: str) -> str:
+    """Đổi tên ĐVVC -> tên file logo: thường, bỏ dấu VN, thay ký tự lạ bằng '-'.
+
+    Ví dụ: "Best Express"->"best-express", "J&T"->"jt", "Viettel Post"->"viettel-post".
+    """
+    import re
+    import unicodedata
+    s = unicodedata.normalize("NFD", name)
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")  # bỏ dấu
+    s = s.lower().replace("đ", "d")
+    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+    return s
+
+
+def find_logo_path(carrier: str):
+    """Tìm file logo cho ĐVVC trong thư mục logos/ (thử png/jpg). None nếu không có."""
+    slug = _slugify_carrier(carrier)
+    for ext in (".png", ".jpg", ".jpeg", ".webp"):
+        p = os.path.join(LOGOS_DIR, slug + ext)
+        if os.path.exists(p):
+            return p
+    return None
 
 
 # ----------------------------- Cấu hình -----------------------------
@@ -355,6 +387,7 @@ class AgentWindow:
         self._summary = None          # summary ngày mới nhất (dict) từ server
         self._summary_lock = threading.Lock()
         self._kpi_widgets = {}        # tên ĐVVC -> label giá trị
+        self._logo_imgs = {}          # tên ĐVVC -> ImageTk (cache logo)
 
         self.root = tk.Tk()
         self.root.title("Scan Ecom — Máy quét")
@@ -485,18 +518,58 @@ class AgentWindow:
         self.total_lbl.config(text=str(s.get("total", 0)))
         order = s.get("carrier_order", [])
         by = s.get("by_carrier", {})
-        # Tạo/ cập nhật thẻ cho từng ĐVVC.
+        # Tạo/ cập nhật thẻ cho từng ĐVVC (logo bên trái, tên + số bên phải).
         for i, name in enumerate(order):
             if name not in self._kpi_widgets:
                 card = tk.Frame(self.kpi_grid, bg=self.PANEL)
                 card.grid(row=i // 2, column=i % 2, sticky="nsew", padx=4, pady=4, ipady=6)
-                tk.Label(card, text=name, fg="#94a3b8", bg=self.PANEL,
-                         font=("Segoe UI", 9)).pack(anchor="w", padx=12, pady=(6, 0))
-                val = tk.Label(card, text="0", fg="#e2e8f0", bg=self.PANEL,
+
+                # Logo (nếu có file trong logos/), nếu không -> badge chữ.
+                logo_img = self._load_logo(name)
+                if logo_img is not None:
+                    lg = tk.Label(card, image=logo_img, bg=self.PANEL)
+                    lg.image = logo_img  # giữ tham chiếu, tránh bị GC
+                    lg.pack(side="left", padx=(10, 8), pady=6)
+                else:
+                    badge = tk.Label(card, text=self._abbrev(name), fg="#e2e8f0",
+                                     bg="#334155", font=("Segoe UI", 10, "bold"),
+                                     width=4, height=2)
+                    badge.pack(side="left", padx=(10, 8), pady=6)
+
+                textcol = tk.Frame(card, bg=self.PANEL)
+                textcol.pack(side="left", fill="x", expand=True)
+                tk.Label(textcol, text=name, fg="#94a3b8", bg=self.PANEL,
+                         font=("Segoe UI", 9)).pack(anchor="w")
+                val = tk.Label(textcol, text="0", fg="#e2e8f0", bg=self.PANEL,
                                font=("Segoe UI", 20, "bold"))
-                val.pack(anchor="w", padx=12, pady=(0, 6))
+                val.pack(anchor="w")
                 self._kpi_widgets[name] = val
             self._kpi_widgets[name].config(text=str(by.get(name, 0)))
+
+    def _abbrev(self, name: str) -> str:
+        """Chữ viết tắt cho badge fallback (khi không có logo)."""
+        parts = name.split()
+        if len(parts) >= 2:
+            return (parts[0][0] + parts[1][0]).upper()
+        return name[:3].upper()
+
+    def _load_logo(self, name: str):
+        """Load + resize logo cho 1 ĐVVC (cache lại). None nếu không có/không load được."""
+        if not HAS_IMAGETK:
+            return None
+        if name in self._logo_imgs:
+            return self._logo_imgs[name]
+        path = find_logo_path(name)
+        img = None
+        if path:
+            try:
+                pil = _PILImage.open(path).convert("RGBA")
+                pil.thumbnail((44, 44))
+                img = ImageTk.PhotoImage(pil)
+            except Exception:  # noqa: BLE001
+                img = None
+        self._logo_imgs[name] = img  # cache cả None để khỏi thử lại
+        return img
 
     # --- vòng lặp cập nhật GUI ---
     def _poll(self):

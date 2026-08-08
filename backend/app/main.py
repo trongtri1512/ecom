@@ -60,30 +60,45 @@ def require_api_key(x_api_key: str = Header(default="")):
 _VN_TZ = timezone(timedelta(hours=7))
 
 
+def _add_months(d: datetime, months: int) -> datetime:
+    """Cộng/trừ tháng an toàn (giữ ngày 1)."""
+    m = d.month - 1 + months
+    year = d.year + m // 12
+    month = m % 12 + 1
+    return d.replace(year=year, month=month, day=1)
+
+
 def period_range(period: str | None):
     """Trả (from_utc, to_utc) cho một kỳ, hoặc (None, None) nếu 'all'/không hợp lệ.
 
-    period: day | week | month | quarter | year | all. Mốc tính theo giờ VN,
-    trả về theo UTC để so với cột scanned_at (lưu UTC).
+    Kỳ hỗ trợ (mốc tính theo giờ VN, trả về UTC để so với scanned_at lưu UTC):
+      day, yesterday, week, last_week, month, last_month, quarter, year, all.
     """
     if not period or period == "all":
         return None, None
     now = datetime.now(_VN_TZ)
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    if period == "day":
-        start = today
-    elif period == "week":
-        start = today - timedelta(days=today.weekday())  # thứ 2 đầu tuần
-    elif period == "month":
-        start = today.replace(day=1)
-    elif period == "quarter":
-        q_first_month = 3 * ((today.month - 1) // 3) + 1
-        start = today.replace(month=q_first_month, day=1)
-    elif period == "year":
-        start = today.replace(month=1, day=1)
-    else:
+    tomorrow = today + timedelta(days=1)
+    week_start = today - timedelta(days=today.weekday())  # thứ 2 đầu tuần này
+    month_start = today.replace(day=1)
+    q_first_month = 3 * ((today.month - 1) // 3) + 1
+    quarter_start = today.replace(month=q_first_month, day=1)
+    year_start = today.replace(month=1, day=1)
+
+    ranges = {
+        "day":        (today, now),
+        "yesterday":  (today - timedelta(days=1), today),
+        "week":       (week_start, now),
+        "last_week":  (week_start - timedelta(days=7), week_start),
+        "month":      (month_start, now),
+        "last_month": (_add_months(month_start, -1), month_start),
+        "quarter":    (quarter_start, now),
+        "year":       (year_start, now),
+    }
+    if period not in ranges:
         return None, None
-    return start.astimezone(timezone.utc), now.astimezone(timezone.utc)
+    start, end = ranges[period]
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
 def apply_period(stmt, period: str | None):
@@ -220,6 +235,9 @@ def update_scan(scan_id: int, payload: ScanUpdate, db: Session = Depends(get_db)
         scan.note = payload.note
     if payload.carrier is not None:
         scan.carrier = payload.carrier
+    if payload.pickup_status is not None:
+        scan.pickup_status = payload.pickup_status
+        scan.pickup_checked_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(scan)
     events.publish("update", scan.as_dict())
@@ -311,7 +329,87 @@ def delete_carrier_rule(rule_id: int, db: Session = Depends(get_db)):
     return Response(status_code=204)
 
 
+# ----------------------------- Tracking (Playwright) -----------------------------
+_track_running = {"on": False}
+
+
+def _do_tracking(carriers_supported: list[str]):
+    """Chạy trong background: tra các mã chưa xác định trạng thái, cập nhật DB."""
+    from . import tracker
+    db = SessionLocal()
+    try:
+        # Lấy các mã hôm nay chưa tra (pickup_status rỗng), nhóm theo hãng hỗ trợ.
+        frm, to = period_range("day")
+        stmt = select(Scan).where(Scan.pickup_status == "")
+        if frm is not None:
+            stmt = stmt.where(Scan.scanned_at >= frm, Scan.scanned_at <= to)
+        rows = db.scalars(stmt).all()
+        by_carrier: dict = {}
+        for r in rows:
+            if r.carrier in carriers_supported:
+                by_carrier.setdefault(r.carrier, []).append(r.code)
+        if not by_carrier:
+            return
+
+        code_to_id = {r.code: r.id for r in rows}
+
+        def on_result(carrier, code, picked):
+            sid = code_to_id.get(code)
+            if sid is None:
+                return
+            scan = db.get(Scan, sid)
+            if scan:
+                scan.pickup_status = "picked" if picked else "pending"
+                scan.pickup_checked_at = datetime.now(timezone.utc)
+                db.commit()
+                events.publish("update", scan.as_dict())
+
+        tracker.track_codes(by_carrier, headless=True, on_result=on_result)
+    finally:
+        db.close()
+        _track_running["on"] = False
+
+
+@app.post("/api/track/run")
+def track_run(background: BackgroundTasks):
+    """Tra trạng thái lấy hàng cho các mã hôm nay chưa xác định (chạy nền)."""
+    from .tracker import CHECKERS
+    if _track_running["on"]:
+        return {"status": "already_running"}
+    _track_running["on"] = True
+    background.add_task(_do_tracking, list(CHECKERS.keys()))
+    return {"status": "started", "carriers": list(CHECKERS.keys())}
+
+
 # ----------------------------- Xuất file -----------------------------
+@app.get("/api/export/import-file")
+def export_import_file(
+    carrier: str = Query(..., description="ĐVVC cần xuất (vd SPX)"),
+    limit: int = Query(default=100, ge=1, le=5000),
+    only_picked: bool = Query(default=True, description="chỉ xuất đơn đã lấy hàng"),
+    db: Session = Depends(get_db),
+):
+    """Xuất Excel ĐÚNG format import lên imv.ops: 1 cột 'Mã'.
+
+    Lấy tối đa `limit` đơn của `carrier` trong NGÀY, theo thứ tự quét (từ đơn đầu
+    tiên trong ngày). Mặc định chỉ lấy đơn ĐÃ lấy hàng (only_picked=True).
+    """
+    frm, to = period_range("day")
+    stmt = select(Scan).where(Scan.carrier == carrier).order_by(Scan.scanned_at.asc())
+    if frm is not None:
+        stmt = stmt.where(Scan.scanned_at >= frm, Scan.scanned_at <= to)
+    if only_picked:
+        stmt = stmt.where(Scan.pickup_status == "picked")
+    rows = db.scalars(stmt.limit(limit)).all()
+    codes = [r.code for r in rows]
+    content = export.to_import_xlsx(codes)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+    fname = f"{carrier}_{stamp}.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 @app.get("/api/export")
 def export_scans(
     format: str = Query(default="xlsx", pattern="^(xlsx|csv)$"),

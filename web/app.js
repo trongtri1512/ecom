@@ -79,12 +79,20 @@ function rowHtml(r, idx) {
     <td>${idx}</td>
     <td class="code">${escapeHtml(r.code)}${dupBadge}</td>
     <td><span class="badge ${isOther ? "other" : ""}">${escapeHtml(r.carrier)}</span></td>
-    <td><input class="cell-edit" data-field="supplier" value="${escapeAttr(r.supplier || "")}" placeholder="—" /></td>
-    <td><input class="cell-edit" data-field="note" value="${escapeAttr(r.note || "")}" placeholder="—" /></td>
+    <td>${statusCell(r)}</td>
     <td>${fmtTime(r.scanned_at)}</td>
     <td>${escapeHtml(r.source_agent || "")}</td>
     <td class="row-actions"><button class="icon-btn btn-del" title="Xoá">🗑️</button></td>
   </tr>`;
+}
+
+/* Ô Trạng thái: bấm để đổi Đã lấy / Chưa lấy (sửa tay). */
+function statusCell(r) {
+  const picked = r.pickup_status === "picked";
+  const cls = picked ? "st-picked" : "st-pending";
+  const txt = picked ? "✔ Đã lấy hàng" : "ĐVVC chưa lấy hàng";
+  const title = r.pickup_checked_at ? `Cập nhật: ${fmtTime(r.pickup_checked_at)}` : "Bấm để đổi trạng thái";
+  return `<button class="status-btn ${cls}" data-picked="${picked ? 1 : 0}" title="${title}">${txt}</button>`;
 }
 
 function escapeHtml(s) {
@@ -108,21 +116,23 @@ async function refresh() {
   await Promise.all([loadSummary(), loadRows()]);
 }
 
-/* ------------------------- Sự kiện bảng (sửa/xoá) ------------------------- */
-rowsEl.addEventListener("change", async (e) => {
-  const inp = e.target.closest(".cell-edit");
-  if (!inp) return;
-  const id = inp.closest("tr").dataset.id;
-  const field = inp.dataset.field;
+/* ------------------------- Sự kiện bảng (đổi trạng thái / xoá) ------------------------- */
+// Bấm nút Trạng thái -> đổi Đã lấy <-> Chưa lấy (sửa tay).
+rowsEl.addEventListener("click", async (e) => {
+  const st = e.target.closest(".status-btn");
+  if (!st) return;
+  const id = st.closest("tr").dataset.id;
+  const newStatus = st.dataset.picked === "1" ? "pending" : "picked";
   try {
     await api(`/api/scans/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ [field]: inp.value }),
+      body: JSON.stringify({ pickup_status: newStatus }),
     });
-    toast("Đã lưu", `${field === "supplier" ? "NCC" : "Ghi chú"} cập nhật`, "ok");
+    // realtime 'update' sẽ refresh; cập nhật ngay cho mượt:
+    loadRows();
   } catch (err) {
-    toast("Lỗi lưu", String(err), "danger");
+    toast("Lỗi cập nhật trạng thái", String(err), "danger");
   }
 });
 
@@ -166,13 +176,40 @@ filterEl.addEventListener("change", refresh);
 periodEl.addEventListener("change", refresh);
 
 $("#btnXlsx").addEventListener("click", () => downloadExport("xlsx"));
-$("#btnCsv").addEventListener("click", () => downloadExport("csv"));
 function downloadExport(fmt) {
   const params = new URLSearchParams({ format: fmt });
   if (filterEl.value) params.set("carrier", filterEl.value);
   if (currentPeriod()) params.set("period", currentPeriod());
   window.location.href = API + "/api/export?" + params.toString();
 }
+
+// Tra trạng thái lấy hàng (Playwright, chạy nền trên server)
+$("#btnTrack").addEventListener("click", async () => {
+  try {
+    const r = await api("/api/track/run", { method: "POST" });
+    if (r.status === "already_running") {
+      toast("Đang tra", "Tiến trình tra trạng thái đang chạy…", "warn");
+    } else {
+      toast("Bắt đầu tra trạng thái", `ĐVVC: ${(r.carriers || []).join(", ")}. Kết quả cập nhật dần.`, "ok");
+    }
+  } catch (err) {
+    toast("Lỗi tra trạng thái", String(err), "danger");
+  }
+});
+
+// Xuất file Excel để import (chỉ đơn ĐÃ lấy hàng, theo ĐVVC + số lượng)
+$("#btnImport").addEventListener("click", async () => {
+  const carrier = filterEl.value;
+  if (!carrier) {
+    toast("Chọn ĐVVC", "Hãy chọn 1 ĐVVC (SPX/J&T…) ở ô lọc trước khi xuất file import", "warn");
+    return;
+  }
+  const limitStr = prompt(`Xuất tối đa bao nhiêu đơn ${carrier} (đã lấy hàng, hôm nay)?`, "100");
+  if (limitStr === null) return;
+  const limit = parseInt(limitStr, 10) || 100;
+  const params = new URLSearchParams({ carrier, limit: String(limit) });
+  window.location.href = API + "/api/export/import-file?" + params.toString();
+})
 
 $("#btnReclassify").addEventListener("click", async () => {
   if (!confirm("Chạy lại nhận diện ĐVVC cho TOÀN BỘ mã?")) return;

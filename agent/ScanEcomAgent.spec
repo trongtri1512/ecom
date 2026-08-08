@@ -9,6 +9,8 @@ a = Analysis(
     ['scanner_agent.py'],
     pathex=[],
     binaries=[],
+    # KHÔNG bundle logos vào .exe: để thư mục logos/ nằm CẠNH .exe (như config.ini)
+    # để người dùng tự thêm/đổi logo mà không cần build lại.
     datas=[],
     # pystray/PIL nạp backend động; tkinter cho cửa sổ GUI -> khai báo để gom đủ.
     hiddenimports=['pystray._win32', 'PIL._tkinter_finder', 'tkinter', 'tkinter.ttk'],

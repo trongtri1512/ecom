@@ -13,10 +13,11 @@ class ScanIn(BaseModel):
 
 
 class ScanUpdate(BaseModel):
-    """Sửa tay 1 bản ghi (supplier/note/carrier)."""
+    """Sửa tay 1 bản ghi (supplier/note/carrier/pickup_status)."""
     supplier: Optional[str] = None
     note: Optional[str] = None
     carrier: Optional[str] = None
+    pickup_status: Optional[str] = None  # "picked" | "pending"
 
 
 class CarrierRuleIn(BaseModel):
@@ -35,6 +36,10 @@ class ScanOut(BaseModel):
     scanned_at: Optional[datetime] = None
     source_agent: Optional[str] = None
     created_at: Optional[datetime] = None
+    dup_count: int = 0
+    last_dup_at: Optional[datetime] = None
+    pickup_status: str = ""
+    pickup_checked_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

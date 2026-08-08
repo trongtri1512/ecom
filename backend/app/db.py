@@ -40,6 +40,10 @@ def _run_light_migrations():
         to_add.append("ALTER TABLE scans ADD COLUMN dup_count INTEGER NOT NULL DEFAULT 0")
     if "last_dup_at" not in existing_cols:
         to_add.append("ALTER TABLE scans ADD COLUMN last_dup_at TIMESTAMP NULL")
+    if "pickup_status" not in existing_cols:
+        to_add.append("ALTER TABLE scans ADD COLUMN pickup_status VARCHAR(16) NOT NULL DEFAULT ''")
+    if "pickup_checked_at" not in existing_cols:
+        to_add.append("ALTER TABLE scans ADD COLUMN pickup_checked_at TIMESTAMP NULL")
     if not to_add:
         return
     with engine.begin() as conn:
