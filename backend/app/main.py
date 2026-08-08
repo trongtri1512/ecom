@@ -479,6 +479,44 @@ def ops_import_now(carrier: str = Query(...)):
         db.close()
 
 
+@app.get("/api/sessions")
+def list_sessions(
+    db: Session = Depends(get_db),
+    period: str | None = Query(default="day"),
+):
+    """Danh sách mã phiên (session_id) đã import lên imv.ops, gộp theo carrier.
+
+    Trả:
+      {
+        "by_carrier": {
+          "SPX": [{"session_id": "...", "count": 100, "first": iso, "last": iso}, ...],
+          "J&T": [...],
+        }
+      }
+    """
+    stmt = (select(Scan.carrier, Scan.session_id,
+                   func.count().label("cnt"),
+                   func.min(Scan.scanned_at).label("first"),
+                   func.max(Scan.scanned_at).label("last"))
+            .where(Scan.session_id != "")
+            .group_by(Scan.carrier, Scan.session_id)
+            .order_by(Scan.session_id.desc()))
+    frm, to = period_range(period)
+    if frm is not None:
+        # lọc theo scanned_at cũng đủ để bao "session hôm nay"
+        stmt = stmt.where(Scan.scanned_at >= frm, Scan.scanned_at <= to)
+    rows = db.execute(stmt).all()
+    by_carrier: dict = {}
+    for carrier, sid, cnt, first, last in rows:
+        by_carrier.setdefault(carrier, []).append({
+            "session_id": sid,
+            "count": cnt,
+            "first": first.isoformat() if first else None,
+            "last": last.isoformat() if last else None,
+        })
+    return {"by_carrier": by_carrier}
+
+
 @app.post("/api/track/run")
 def track_run(background: BackgroundTasks):
     """Tra trạng thái lấy hàng cho các mã hôm nay chưa xác định (chạy nền)."""

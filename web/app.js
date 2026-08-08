@@ -398,6 +398,15 @@ function connectStream() {
   es.addEventListener("delete", refresh);
   es.addEventListener("reclassify", refresh);
   es.addEventListener("carriers", () => { if (!modal.hidden) loadCarrierRules(); refresh(); });
+  es.addEventListener("auto_import", (e) => {
+    const r = JSON.parse(e.data);
+    toast("📤 Đã import lên OPS", `${r.carrier}: ${r.count} đơn — mã phiên: ${r.session_id}`, "ok");
+    refresh();
+  });
+  es.addEventListener("auto_import_error", (e) => {
+    const r = JSON.parse(e.data);
+    toast("⚠️ Lỗi auto import OPS", `${r.carrier}: ${r.error}`, "danger");
+  });
 
   es.onerror = () => {
     conn.className = "dot dot-off";

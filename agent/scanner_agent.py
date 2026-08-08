@@ -239,6 +239,16 @@ class Sender:
             pass
         return None
 
+    def get_sessions_today(self):
+        """Danh sách mã phiên đã import hôm nay, nhóm theo ĐVVC. None nếu lỗi."""
+        try:
+            r = self.session.get(self.cfg["url"] + "/api/sessions?period=day", timeout=8)
+            if r.status_code == 200:
+                return r.json().get("by_carrier", {})
+        except requests.RequestException:
+            pass
+        return None
+
     def flush_loop(self):
         """Chạy nền: định kỳ gửi lại các mã đang xếp hàng khi có mạng."""
         while True:
@@ -388,6 +398,8 @@ class AgentWindow:
         self._summary_lock = threading.Lock()
         self._kpi_widgets = {}        # tên ĐVVC -> label giá trị
         self._logo_imgs = {}          # tên ĐVVC -> ImageTk (cache logo)
+        self._sessions = {}           # by_carrier: {carrier: [{session_id,count,...}]}
+        self._last_session_ids = set()  # để phát hiện phiên mới, hiện thông báo
 
         self.root = tk.Tk()
         self.root.title("Scan Ecom — Máy quét")
@@ -448,9 +460,20 @@ class AgentWindow:
 
         # Lưới thẻ theo ĐVVC (2 cột)
         self.kpi_grid = tk.Frame(right, bg=self.BG)
-        self.kpi_grid.pack(fill="both", expand=True)
+        self.kpi_grid.pack(fill="x")
         self.kpi_grid.columnconfigure(0, weight=1)
         self.kpi_grid.columnconfigure(1, weight=1)
+
+        # ---- Khối "Mã phiên hôm nay" (mỗi ĐVVC 1 dòng) ----
+        tk.Label(right, text="MÃ PHIÊN OPS HÔM NAY", fg="#94a3b8", bg=self.BG,
+                 font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(14, 4))
+        self.sessions_box = tk.Frame(right, bg=self.PANEL)
+        self.sessions_box.pack(fill="both", expand=True)
+        self.sessions_empty = tk.Label(self.sessions_box,
+                                       text="  (chưa có phiên nào import lên OPS)",
+                                       fg="#64748b", bg=self.PANEL,
+                                       font=("Segoe UI", 9, "italic"))
+        self.sessions_empty.pack(anchor="w", padx=12, pady=8)
 
         # ---- Nút điều khiển ----
         btns = tk.Frame(self.root, bg=self.BG)
@@ -490,7 +513,7 @@ class AgentWindow:
         self.root.deiconify()
         self.root.lift()
 
-    # --- lấy summary ngày từ server (thread nền) ---
+    # --- lấy summary + sessions ngày từ server (thread nền) ---
     def _start_summary_loop(self):
         def loop():
             while True:
@@ -498,6 +521,10 @@ class AgentWindow:
                 if s is not None:
                     with self._summary_lock:
                         self._summary = s
+                sess = self.state["sender"].get_sessions_today()
+                if sess is not None:
+                    with self._summary_lock:
+                        self._sessions = sess
                 time.sleep(5)  # tự làm mới mỗi 5 giây
         threading.Thread(target=loop, daemon=True).start()
 
@@ -508,6 +535,10 @@ class AgentWindow:
             if s is not None:
                 with self._summary_lock:
                     self._summary = s
+            sess = self.state["sender"].get_sessions_today()
+            if sess is not None:
+                with self._summary_lock:
+                    self._sessions = sess
         threading.Thread(target=once, daemon=True).start()
 
     def _render_summary(self):
@@ -571,6 +602,47 @@ class AgentWindow:
         self._logo_imgs[name] = img  # cache cả None để khỏi thử lại
         return img
 
+    def _render_sessions(self):
+        """Vẽ khối 'Mã phiên OPS hôm nay' — mỗi ĐVVC 1 khối."""
+        with self._summary_lock:
+            data = dict(self._sessions or {})
+        # Xoá các widget cũ (rebuild toàn bộ cho đơn giản, khối nhỏ nên ok)
+        for w in self.sessions_box.winfo_children():
+            w.destroy()
+        if not data:
+            self.sessions_empty = tk.Label(self.sessions_box,
+                                           text="  (chưa có phiên nào import lên OPS)",
+                                           fg="#64748b", bg=self.PANEL,
+                                           font=("Segoe UI", 9, "italic"))
+            self.sessions_empty.pack(anchor="w", padx=12, pady=8)
+            return
+        # Phát hiện phiên MỚI so với lần render trước -> hiện thông báo (bíp)
+        current_ids = set()
+        for arr in data.values():
+            for s in arr:
+                current_ids.add(s["session_id"])
+        new_ids = current_ids - self._last_session_ids
+        self._last_session_ids = current_ids
+        # Vẽ theo từng ĐVVC
+        for carrier in sorted(data.keys()):
+            row = tk.Frame(self.sessions_box, bg=self.PANEL)
+            row.pack(fill="x", padx=10, pady=4)
+            tk.Label(row, text=carrier, fg="#94a3b8", bg=self.PANEL,
+                     font=("Segoe UI", 9, "bold"), width=10, anchor="w").pack(side="left")
+            # Các mã phiên (bấm chuột phải để copy? — đơn giản là hiện text chọn được)
+            text = "   ".join(f"{s['session_id']} ({s['count']})" for s in data[carrier])
+            tk.Label(row, text=text, fg="#e2e8f0", bg=self.PANEL,
+                     font=("Consolas", 10), anchor="w", justify="left",
+                     wraplength=520).pack(side="left", fill="x", expand=True)
+        # Thông báo phiên mới (nếu có, và không phải lần render đầu tiên)
+        if new_ids and self._last_session_ids != new_ids:
+            for sid in new_ids:
+                # sid format: YYYYMMDD-HHMMSS-CARRIER
+                parts = sid.split("-")
+                carrier = parts[-1] if len(parts) >= 3 else sid
+                self.listbox.insert(0, f"{time.strftime('%H:%M:%S')}  📤 Import OPS   {carrier}: {sid}")
+                self.listbox.itemconfig(0, fg="#3b82f6")
+
     # --- vòng lặp cập nhật GUI ---
     def _poll(self):
         try:
@@ -586,6 +658,7 @@ class AgentWindow:
         else:
             self.status_lbl.config(text="● Sẵn sàng", fg="#22c55e")
         self._render_summary()
+        self._render_sessions()
         self.root.after(500, self._poll)
 
     def _add_row(self, ev):
