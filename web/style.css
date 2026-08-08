@@ -83,6 +83,21 @@ body {
 .btn-primary { background: var(--primary); border-color: var(--primary); }
 .btn-primary:hover { background: var(--primary-d); }
 .btn-ghost { background: transparent; }
+.btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn-danger:hover { background: #dc2626; border-color: #dc2626; }
+
+/* Thanh thao tác hàng loạt */
+.bulkbar {
+  display: flex; align-items: center; gap: 12px;
+  margin: 0 20px 12px; padding: 10px 16px;
+  background: var(--panel); border: 1px solid var(--primary); border-radius: 10px;
+}
+.bulkbar[hidden] { display: none; }
+#bulkCount { font-weight: 700; margin-right: auto; }
+
+/* Cột checkbox */
+.col-check { width: 36px; text-align: center; }
+.col-check input { width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary); }
 
 /* Table */
 .tablewrap { padding: 0 20px 40px; overflow-x: auto; }

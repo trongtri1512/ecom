@@ -41,11 +41,19 @@
     <button id="btnXlsx" class="btn btn-primary">Xuất Excel</button>
   </section>
 
+  <!-- Thanh thao tác hàng loạt (ẩn khi chưa chọn dòng nào) -->
+  <div id="bulkbar" class="bulkbar" hidden>
+    <span id="bulkCount">Đã chọn 0</span>
+    <button id="btnBulkDelete" class="btn btn-danger">🗑️ Xóa đã chọn</button>
+    <button id="btnBulkClear" class="btn btn-ghost">Bỏ chọn</button>
+  </div>
+
   <!-- Bảng danh sách -->
   <section class="tablewrap">
     <table id="tbl">
       <thead>
         <tr>
+          <th class="col-check"><input type="checkbox" id="checkAll" title="Chọn tất cả" /></th>
           <th>#</th>
           <th>Mã vận đơn</th>
           <th>ĐVVC</th>

@@ -76,6 +76,7 @@ function rowHtml(r, idx) {
     ? ` <span class="dup-badge" title="Đã bị quét trùng ${dup} lần (gần nhất: ${fmtTime(r.last_dup_at)})">⚠ trùng ×${dup}</span>`
     : "";
   return `<tr data-id="${r.id}" class="${dup > 0 ? "row-dup" : ""}">
+    <td class="col-check"><input type="checkbox" class="row-check" /></td>
     <td>${idx}</td>
     <td class="code">${escapeHtml(r.code)}${dupBadge}</td>
     <td><span class="badge ${isOther ? "other" : ""}">${escapeHtml(r.carrier)}</span></td>
@@ -110,7 +111,69 @@ async function loadRows() {
   const items = data.items || [];
   emptyEl.hidden = items.length > 0;
   rowsEl.innerHTML = items.map((r, i) => rowHtml(r, i + 1)).join("");
+  // reset trạng thái chọn sau mỗi lần tải lại danh sách
+  const ca = $("#checkAll"); if (ca) ca.checked = false;
+  updateBulkBar();
 }
+
+/* ------------------------- Chọn nhiều dòng / xóa hàng loạt ------------------------- */
+function selectedIds() {
+  return [...rowsEl.querySelectorAll(".row-check:checked")]
+    .map((c) => c.closest("tr").dataset.id);
+}
+
+function updateBulkBar() {
+  const n = selectedIds().length;
+  const bar = $("#bulkbar");
+  bar.hidden = n === 0;
+  if (n > 0) $("#bulkCount").textContent = `Đã chọn ${n}`;
+  // đồng bộ trạng thái checkbox "chọn tất cả"
+  const all = [...rowsEl.querySelectorAll(".row-check")];
+  const ca = $("#checkAll");
+  if (ca) ca.checked = all.length > 0 && all.every((c) => c.checked);
+}
+
+// tích/bỏ tích 1 dòng
+rowsEl.addEventListener("change", (e) => {
+  if (e.target.classList.contains("row-check")) updateBulkBar();
+});
+
+// chọn tất cả
+$("#checkAll").addEventListener("change", (e) => {
+  rowsEl.querySelectorAll(".row-check").forEach((c) => { c.checked = e.target.checked; });
+  updateBulkBar();
+});
+
+// bỏ chọn
+$("#btnBulkClear").addEventListener("click", () => {
+  rowsEl.querySelectorAll(".row-check").forEach((c) => { c.checked = false; });
+  $("#checkAll").checked = false;
+  updateBulkBar();
+});
+
+// xóa hàng loạt
+$("#btnBulkDelete").addEventListener("click", async () => {
+  const ids = selectedIds();
+  if (!ids.length) return;
+  if (!confirm(`Xóa ${ids.length} mã đã chọn? Không hoàn tác được.`)) return;
+  const pass = prompt("Nhập mật khẩu để xóa hàng loạt:");
+  if (pass === null) return;
+  try {
+    const r = await api("/api/scans/bulk-delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Delete-Password": pass },
+      body: JSON.stringify({ ids: ids.map(Number) }),
+    });
+    toast("Đã xóa", `${r.deleted} mã`, "warn");
+    refresh();
+  } catch (err) {
+    if (String(err).includes("mật khẩu") || String(err).includes("403")) {
+      toast("Sai mật khẩu", "Không xóa được", "danger");
+    } else {
+      toast("Lỗi xóa hàng loạt", String(err), "danger");
+    }
+  }
+});
 
 async function refresh() {
   await Promise.all([loadSummary(), loadRows()]);

@@ -25,7 +25,7 @@ from .carriers import carrier_names, detect_carrier, seed_default_rules
 from .db import SessionLocal, get_db, init_db
 from .mailer import send_duplicate_alert
 from .models import CarrierRule, Scan
-from .schemas import CarrierRuleIn, ScanIn, ScanOut, ScanUpdate
+from .schemas import BulkDeleteIn, CarrierRuleIn, ScanIn, ScanOut, ScanUpdate
 
 app = FastAPI(title="Scan Ecom API", version="1.0.0")
 
@@ -260,6 +260,26 @@ def delete_scan(
     db.commit()
     events.publish("delete", {"id": scan_id})
     return Response(status_code=204)
+
+
+@app.post("/api/scans/bulk-delete")
+def bulk_delete_scans(
+    payload: BulkDeleteIn,
+    db: Session = Depends(get_db),
+    x_delete_password: str = Header(default=""),
+):
+    """Xoá hàng loạt theo danh sách id (Admin tự chọn). Cần mật khẩu xoá."""
+    if x_delete_password != config.DELETE_PASSWORD:
+        raise HTTPException(status_code=403, detail="Sai mật khẩu xoá")
+    ids = list({int(i) for i in payload.ids})
+    if not ids:
+        return {"deleted": 0}
+    from sqlalchemy import delete as sa_delete
+    result = db.execute(sa_delete(Scan).where(Scan.id.in_(ids)))
+    db.commit()
+    deleted = result.rowcount or 0
+    events.publish("delete", {"ids": ids})
+    return {"deleted": deleted}
 
 
 @app.post("/api/reclassify")

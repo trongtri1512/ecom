@@ -20,6 +20,11 @@ class ScanUpdate(BaseModel):
     pickup_status: Optional[str] = None  # "picked" | "pending"
 
 
+class BulkDeleteIn(BaseModel):
+    """Xoá hàng loạt: danh sách id cần xoá."""
+    ids: list[int]
+
+
 class CarrierRuleIn(BaseModel):
     """Luật nhận diện ĐVVC: tên hãng + prefix (chuỗi đầu mã) + ưu tiên."""
     name: str = Field(..., min_length=1, max_length=64)
