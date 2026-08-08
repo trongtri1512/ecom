@@ -33,6 +33,8 @@ class Scan(Base):
     # Trạng thái lấy hàng của ĐVVC: "picked" (đã lấy) | "pending" (chưa lấy) | "" (chưa tra).
     pickup_status: Mapped[str] = mapped_column(String(16), nullable=False, default="")
     pickup_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Batch đã import lên imv.ops (rỗng = chưa import). Format: "YYYYMMDD-HHMMSS-CARRIER".
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False, default="", index=True)
 
     def as_dict(self) -> dict:
         return {
@@ -48,6 +50,7 @@ class Scan(Base):
             "last_dup_at": self.last_dup_at.isoformat() if self.last_dup_at else None,
             "pickup_status": self.pickup_status or "",
             "pickup_checked_at": self.pickup_checked_at.isoformat() if self.pickup_checked_at else None,
+            "session_id": self.session_id or "",
         }
 
 

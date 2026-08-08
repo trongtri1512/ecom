@@ -28,6 +28,13 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       DUP_GRACE_SECONDS: ${DUP_GRACE_SECONDS:-60}
       DELETE_PASSWORD: ${DELETE_PASSWORD:-1512}
+      # Auto import imv.ops
+      AUTO_IMPORT_ENABLED: ${AUTO_IMPORT_ENABLED:-false}
+      AUTO_IMPORT_BATCH: ${AUTO_IMPORT_BATCH:-100}
+      OPS_URL: ${OPS_URL:-https://imv.ops.vnfai.com}
+      OPS_USER: ${OPS_USER:-}
+      OPS_PASS: ${OPS_PASS:-}
+      OPS_CARRIER_MAP: ${OPS_CARRIER_MAP:-}
       MAIL_ENABLED: ${MAIL_ENABLED:-true}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}

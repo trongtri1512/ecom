@@ -98,6 +98,27 @@ xuất Excel đúng format (2 sheet: "Dữ Liệu" cột **Mã** + "Diễn Giả
 đơn **đã lấy hàng** trong ngày, tối đa `limit` đơn (mặc định 100). File này import
 thẳng lên hệ thống TPL nội bộ.
 
+## Auto import lên imv.ops (Playwright)
+Bật `AUTO_IMPORT_ENABLED=true` trong `.env`. Khi 1 hãng có đủ `AUTO_IMPORT_BATCH`
+(mặc định 100) đơn **đã lấy hàng** *chưa* được import, sau lần "Tra trạng thái"
+tiếp theo server sẽ tự:
+1. Xuất file Excel format import (cho đúng 100 đơn đó).
+2. Playwright mở `imv.ops`, login bằng `OPS_USER`/`OPS_PASS`, vào
+   `/tpl-sessions/new/{template_id}`, bấm IMPORT → chọn file → chọn Đối tác vận
+   chuyển → TẠO.
+3. Gán `session_id` cho 100 mã đó để không import lại.
+
+Cấu hình `OPS_CARRIER_MAP` (JSON) map từng hãng → `template_id` (số cuối URL) +
+`partner` (tên hiển thị trong dropdown "Đối tác vận chuyển"). Ví dụ:
+```
+OPS_CARRIER_MAP={"SPX":{"template_id":2,"partner":"SPX Express"},"J&T":{"template_id":2,"partner":"J&T Express"}}
+```
+Test cấu hình bằng: `curl -X POST 'http://<host>/api/ops/import-now?carrier=SPX'`.
+
+> ⚠️ Bảo mật: `OPS_USER`/`OPS_PASS` lưu trong `.env` trên VPS (không commit).
+> Selector login/upload viết theo pattern linh hoạt; nếu imv.ops đổi giao diện,
+> chỉnh `_login`/`_click_first` trong [ops_uploader.py](backend/app/ops_uploader.py).
+
 ## API tóm tắt
 | Method | Path | Mô tả |
 |--------|------|-------|
@@ -109,6 +130,8 @@ thẳng lên hệ thống TPL nội bộ.
 | GET | `/api/export?format=xlsx\|csv&period=` | Xuất bảng đầy đủ (lọc kỳ) |
 | GET | `/api/export/import-file?carrier=&limit=` | Xuất Excel format import (đơn đã lấy) |
 | POST | `/api/track/run` | Tra trạng thái lấy hàng (Playwright, chạy nền) |
+| POST | `/api/ops/import-now?carrier=SPX` | Ép import ngay 1 hãng lên imv.ops (test) |
+| POST | `/api/scans/bulk-delete` | Xoá hàng loạt theo `ids` (cần `X-Delete-Password`) |
 | POST | `/api/reclassify` | Phân loại lại toàn bộ |
 | GET | `/api/carriers` · POST · PATCH `/{id}` · DELETE `/{id}` | Quản lý luật ĐVVC |
 | GET | `/api/stream` | SSE realtime |

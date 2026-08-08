@@ -44,6 +44,8 @@ def _run_light_migrations():
         to_add.append("ALTER TABLE scans ADD COLUMN pickup_status VARCHAR(16) NOT NULL DEFAULT ''")
     if "pickup_checked_at" not in existing_cols:
         to_add.append("ALTER TABLE scans ADD COLUMN pickup_checked_at TIMESTAMP NULL")
+    if "session_id" not in existing_cols:
+        to_add.append("ALTER TABLE scans ADD COLUMN session_id VARCHAR(64) NOT NULL DEFAULT ''")
     if not to_add:
         return
     with engine.begin() as conn:

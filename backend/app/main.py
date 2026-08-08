@@ -388,6 +388,95 @@ def _do_tracking(carriers_supported: list[str]):
     finally:
         db.close()
         _track_running["on"] = False
+    # Sau khi tra xong, thử tự động import các lô đủ 100.
+    if config.AUTO_IMPORT_ENABLED:
+        _try_auto_import()
+
+
+def _try_auto_import():
+    """Với mỗi hãng có trong OPS_CARRIER_MAP: nếu có >= AUTO_IMPORT_BATCH đơn
+    'picked' hôm nay chưa được import (session_id=""), xuất Excel + upload lên ops
+    + gán session_id cho các mã trong batch để không import lại.
+    """
+    from . import ops_uploader
+    if not (config.OPS_USER and config.OPS_PASS and config.OPS_CARRIER_MAP):
+        return
+    frm, to = period_range("day")
+    db = SessionLocal()
+    try:
+        for carrier, cfg in config.OPS_CARRIER_MAP.items():
+            template_id = int(cfg.get("template_id", 2))
+            partner = cfg.get("partner", carrier)
+            stmt = (select(Scan).where(Scan.carrier == carrier,
+                                       Scan.pickup_status == "picked",
+                                       Scan.session_id == "")
+                    .order_by(Scan.scanned_at.asc()))
+            if frm is not None:
+                stmt = stmt.where(Scan.scanned_at >= frm, Scan.scanned_at <= to)
+            rows = db.scalars(stmt.limit(config.AUTO_IMPORT_BATCH)).all()
+            if len(rows) < config.AUTO_IMPORT_BATCH:
+                continue  # chưa đủ batch
+            codes = [r.code for r in rows]
+            session_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{carrier}"
+            # Xuất file tạm
+            content = export.to_import_xlsx(codes)
+            tmp_path = f"/tmp/{session_id}.xlsx"
+            with open(tmp_path, "wb") as f:
+                f.write(content)
+            print(f"[auto-import] {carrier} bắt đầu upload {len(codes)} đơn -> {tmp_path}")
+            result = ops_uploader.upload_import(carrier, tmp_path, template_id, partner)
+            if result.get("ok"):
+                for r in rows:
+                    r.session_id = session_id
+                db.commit()
+                print(f"[auto-import] {carrier} OK session={session_id}")
+                events.publish("auto_import", {"carrier": carrier, "count": len(codes),
+                                                "session_id": session_id})
+            else:
+                print(f"[auto-import] {carrier} LỖI: {result.get('error')}")
+                events.publish("auto_import_error", {"carrier": carrier,
+                                                      "error": result.get("error")})
+    finally:
+        db.close()
+
+
+@app.post("/api/ops/import-now")
+def ops_import_now(carrier: str = Query(...)):
+    """Kích hoạt import ngay 1 hãng (không đợi đủ batch). Dùng để test cấu hình."""
+    from . import ops_uploader
+    cfg = (config.OPS_CARRIER_MAP or {}).get(carrier)
+    if not cfg:
+        raise HTTPException(status_code=400, detail=f"OPS_CARRIER_MAP chưa có '{carrier}'")
+    if not (config.OPS_USER and config.OPS_PASS):
+        raise HTTPException(status_code=400, detail="Thiếu OPS_USER/OPS_PASS trong env")
+    frm, to = period_range("day")
+    db = SessionLocal()
+    try:
+        stmt = (select(Scan).where(Scan.carrier == carrier,
+                                   Scan.pickup_status == "picked",
+                                   Scan.session_id == "")
+                .order_by(Scan.scanned_at.asc()))
+        if frm is not None:
+            stmt = stmt.where(Scan.scanned_at >= frm, Scan.scanned_at <= to)
+        rows = db.scalars(stmt.limit(config.AUTO_IMPORT_BATCH)).all()
+        if not rows:
+            return {"status": "empty", "message": "Không có đơn 'picked' chưa import"}
+        codes = [r.code for r in rows]
+        session_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{carrier}"
+        tmp_path = f"/tmp/{session_id}.xlsx"
+        with open(tmp_path, "wb") as f:
+            f.write(export.to_import_xlsx(codes))
+        result = ops_uploader.upload_import(carrier, tmp_path, int(cfg["template_id"]),
+                                            cfg.get("partner", carrier))
+        if result.get("ok"):
+            for r in rows:
+                r.session_id = session_id
+            db.commit()
+        return {"status": "ok" if result.get("ok") else "error",
+                "count": len(codes), "session_id": session_id,
+                "error": result.get("error", "")}
+    finally:
+        db.close()
 
 
 @app.post("/api/track/run")

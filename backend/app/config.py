@@ -41,3 +41,19 @@ DUP_GRACE_SECONDS = int(_get("DUP_GRACE_SECONDS", "60") or "60")
 
 # Mật khẩu xác nhận khi XOÁ dòng (kiểm ở server). Đổi trong .env.
 DELETE_PASSWORD = _get("DELETE_PASSWORD", "1512")
+
+# ---- Auto import file Excel lên imv.ops.vnfai.com ----
+OPS_URL = _get("OPS_URL", "https://imv.ops.vnfai.com").rstrip("/")
+OPS_USER = _get("OPS_USER")
+OPS_PASS = _get("OPS_PASS")
+# Số đơn 'picked' chưa import cần đạt để tự động upload cho 1 hãng.
+AUTO_IMPORT_BATCH = int(_get("AUTO_IMPORT_BATCH", "100") or "100")
+# Bật/tắt tính năng auto import.
+AUTO_IMPORT_ENABLED = _get("AUTO_IMPORT_ENABLED", "false").lower() in ("1", "true", "yes")
+# Map hãng -> {template_id, partner_name} (JSON string trong env). Ví dụ:
+#   OPS_CARRIER_MAP='{"SPX":{"template_id":2,"partner":"SPX Express"},"J&T":{"template_id":3,"partner":"J&T Express"}}'
+import json as _json
+try:
+    OPS_CARRIER_MAP = _json.loads(_get("OPS_CARRIER_MAP", "{}") or "{}")
+except Exception:  # noqa: BLE001
+    OPS_CARRIER_MAP = {}
