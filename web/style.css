@@ -54,11 +54,27 @@ body {
   display: flex; align-items: center; gap: 10px; padding: 0 20px 16px; flex-wrap: wrap;
 }
 .toolbar .spacer { flex: 1; }
-#search, #filterCarrier {
+#search {
   background: var(--panel); border: 1px solid var(--line); color: var(--text);
   padding: 9px 12px; border-radius: 8px; font-size: 14px;
 }
 #search { min-width: 260px; }
+#search:focus { outline: none; border-color: var(--primary); }
+
+/* Dropdown đẹp, đồng bộ với các nút (bỏ giao diện mặc định trình duyệt) */
+.toolbar select {
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  background-color: var(--panel-2);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2394a3b8' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  border: 1px solid var(--line); color: var(--text);
+  padding: 9px 34px 9px 14px; border-radius: 8px; font-size: 14px;
+  cursor: pointer; transition: border-color .15s, background-color .15s;
+}
+.toolbar select:hover { border-color: var(--primary); }
+.toolbar select:focus { outline: none; border-color: var(--primary); }
+.toolbar select option { background: var(--panel); color: var(--text); }
 .btn {
   background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
   padding: 9px 14px; border-radius: 8px; cursor: pointer; font-size: 14px;
