@@ -114,9 +114,26 @@ Khi chạy (nếu `show_window = true`), agent mở cửa sổ chia 2 phần:
 
 ## Cơ chế phân biệt quét vs gõ tay
 Máy quét gõ rất nhanh (~10–30ms/ký tự). Agent chỉ gom các ký tự đến trong
-ngưỡng `inter_key_timeout` (mặc định 0.05s) và kết thúc bằng Enter. Gõ tay chậm
-hơn nên không bị nhận nhầm. Chỉnh `inter_key_timeout` / `min_length` trong
+ngưỡng `inter_key_timeout` (mặc định 0.05s) và kết thúc bằng **Enter**. Gõ tay
+chậm hơn nên không bị nhận nhầm. Chỉnh `inter_key_timeout` / `min_length` trong
 `config.ini` nếu cần.
+
+### ⚠️ Đổi máy quét mới → Notepad ra chữ nhưng agent không nhận?
+Nguyên nhân phổ biến nhất: **máy quét mới thiếu Enter (CR) sau mỗi mã**. Agent
+chờ Enter để "chốt" mã — không có Enter thì cứ gom mãi, không xử lý.
+
+**Cách kiểm nhanh:** quét 2 mã liên tiếp vào Notepad.
+- 2 mã **dính cùng 1 dòng** → thiếu Enter → bật CR Suffix trên máy quét.
+- 2 mã **ở 2 dòng riêng** → có Enter → thử tăng `inter_key_timeout` (VD `0.15`).
+
+**Bật Enter (CR) theo hãng:**
+- **Honeywell** (Vuquest 3320g, Xenon, Voyager...): tra sách "User's Guide" bản gốc
+  (tải trên honeywellaidc.com), quét mã cấu hình **"Add CR Suffix"** hoặc
+  **"Add CR + LF Suffix"** (thường ở chương Prefixes/Suffixes).
+- **Datalogic** (QuickScan, Gryphon...): quét mã **"Add Enter (CR/LF)"**.
+- **Zebra/Symbol** (DS22xx, LI4278...): quét mã **"Enter Key"** trong sách 123Scan.
+- **Máy quét Trung Quốc rẻ tiền**: mã cấu hình dạng "Enable Enter" thường có ngay
+  trang đầu sách nhỏ đi kèm.
 
 ## Nhiều máy quét trên cùng 1 máy tính
 Cắm **2 (hoặc nhiều) máy quét** vào cùng 1 máy tính vẫn chạy bình thường — **chỉ
