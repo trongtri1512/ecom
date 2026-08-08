@@ -417,15 +417,17 @@ def _try_auto_import():
             if len(rows) < config.AUTO_IMPORT_BATCH:
                 continue  # chưa đủ batch
             codes = [r.code for r in rows]
-            session_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{carrier}"
-            # Xuất file tạm
+            # Tên file dùng timestamp cho duy nhất; session_id sẽ lấy từ OPS.
+            stamp = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{carrier}"
             content = export.to_import_xlsx(codes)
-            tmp_path = f"/tmp/{session_id}.xlsx"
+            tmp_path = f"/tmp/{stamp}.xlsx"
             with open(tmp_path, "wb") as f:
                 f.write(content)
             print(f"[auto-import] {carrier} bắt đầu upload {len(codes)} đơn -> {tmp_path}")
             result = ops_uploader.upload_import(carrier, tmp_path, template_id, partner)
             if result.get("ok"):
+                # Ưu tiên mã do OPS cấp (VD SPXCCEJDN26U); nếu OPS không trả -> fallback stamp
+                session_id = result.get("ops_session_id") or stamp
                 for r in rows:
                     r.session_id = session_id
                 db.commit()
@@ -462,18 +464,21 @@ def ops_import_now(carrier: str = Query(...)):
         if not rows:
             return {"status": "empty", "message": "Không có đơn 'picked' chưa import"}
         codes = [r.code for r in rows]
-        session_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{carrier}"
-        tmp_path = f"/tmp/{session_id}.xlsx"
+        stamp = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{carrier}"
+        tmp_path = f"/tmp/{stamp}.xlsx"
         with open(tmp_path, "wb") as f:
             f.write(export.to_import_xlsx(codes))
         result = ops_uploader.upload_import(carrier, tmp_path, int(cfg["template_id"]),
                                             cfg.get("partner", carrier))
+        session_id = ""
         if result.get("ok"):
+            session_id = result.get("ops_session_id") or stamp
             for r in rows:
                 r.session_id = session_id
             db.commit()
         return {"status": "ok" if result.get("ok") else "error",
                 "count": len(codes), "session_id": session_id,
+                "ops_session_id": result.get("ops_session_id", ""),
                 "error": result.get("error", "")}
     finally:
         db.close()
