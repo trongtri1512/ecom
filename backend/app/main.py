@@ -595,8 +595,17 @@ def ops_import_now(
                 db.execute(delete(Scan).where(Scan.code.in_(failed_codes)))
                 
             db.commit()
+            
+            msg = f"OK, mã phiên: {session_id}"
+            if failed_codes:
+                # Giới hạn text hiển thị log tránh tràn bảng
+                failed_str = ", ".join(failed_codes)
+                if len(failed_str) > 200:
+                    failed_str = failed_str[:197] + "..."
+                msg += f" | OPS ĐÃ LOẠI {len(failed_codes)} MÃ TRÙNG/LỖI: {failed_str}"
+                
             _log_ops(db, "success", "manual_import", carrier, entered,
-                     session_id, f"OK, mã phiên: {session_id}", "")
+                     session_id, msg, "")
             events.publish("auto_import", {"carrier": carrier, "count": entered,
                                             "session_id": session_id})
         else:

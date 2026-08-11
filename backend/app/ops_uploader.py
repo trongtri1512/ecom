@@ -126,8 +126,8 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                 for row in rows:
                     if not row.is_visible(): continue
                     txt = row.inner_text().lower()
-                    # Nhận diện lỗi: trùng, tồn tại, đã lấy hàng, lỗi...
-                    if "trùng" in txt or "tồn tại" in txt or "đã lấy hàng" in txt or "lỗi" in txt:
+                    # Nhận diện lỗi: trùng, tồn tại, đã lấy hàng, lỗi, đã bàn giao, khác...
+                    if any(k in txt for k in ["trùng", "tồn tại", "đã lấy hàng", "lỗi", "đã bàn giao", "khác", "không hợp lệ"]):
                         # Ghi nhận mã bị lỗi bằng cách quét xem mã nào có trong text của dòng này
                         for code in codes:
                             if code.strip().lower() in txt and code.strip() not in failed_codes:
@@ -215,6 +215,12 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                 m_count = re.search(r"(?:Số lượng kiện hàng bàn giao|Số kiện hàng|Số lượng|Tổng số kiện)[\s:]*(\d+)", info_text, re.IGNORECASE)
                 if m_count:
                     actual_entered = int(m_count.group(1))
+                    
+                # Đối chiếu mã xem mã nào bị OPS âm thầm gạch bỏ (silently dropped)
+                # Nếu mã không có trong text của trang View, chắc chắn nó đã bị loại!
+                for code in codes:
+                    if code not in info_text and code not in failed_codes:
+                        failed_codes.append(code.strip())
             except Exception as e:
                 print(f"[scan_import] Không đọc được số lượng thực tế: {e}")
 
