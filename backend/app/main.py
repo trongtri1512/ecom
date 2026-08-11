@@ -658,6 +658,7 @@ def ops_log_clear(db: Session = Depends(get_db)):
     db.commit()
     events.publish("ops_log", {"cleared": True})
     return Response(status_code=204)
+
 @app.delete("/api/sessions/{session_id}")
 def delete_session(session_id: str, db: Session = Depends(get_db)):
     """Xóa một phiên OPS khỏi hệ thống (để có thể import lại)."""
@@ -676,6 +677,24 @@ def delete_session(session_id: str, db: Session = Depends(get_db)):
     events.publish("ops_log", {"action": "delete_session", "session_id": session_id})
     return {"status": "ok", "message": f"Đã xóa phiên {session_id}"}
 
+
+@app.delete("/api/sessions/carrier/{carrier}")
+def reset_sessions_by_carrier(carrier: str, db: Session = Depends(get_db)):
+    """Xóa TẤT CẢ phiên giao của 1 ĐVVC để làm lại từ đầu."""
+    # Đưa toàn bộ kiện hàng của ĐVVC này về trạng thái chưa có phiên
+    db.execute(
+        update(Scan)
+        .where(Scan.carrier == carrier)
+        .values(session_id="")
+    )
+    # Xóa tất cả log import của ĐVVC này
+    db.execute(
+        delete(OpsLog)
+        .where(OpsLog.carrier == carrier)
+    )
+    db.commit()
+    events.publish("ops_log", {"action": "reset_carrier", "carrier": carrier})
+    return {"status": "ok", "message": f"Đã reset toàn bộ phiên giao của {carrier}"}
 
 
 @app.get("/api/sessions")

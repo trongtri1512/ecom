@@ -74,6 +74,7 @@
         Chỉ đơn đã lấy hàng
       </label>
       <button id="btnPostNow" class="btn btn-danger">📤 Post ngay lên OPS</button>
+      <button id="btnResetCarrier" class="btn btn-ghost" style="color:var(--text);border:1px solid #475569;" title="Khôi phục trạng thái chờ import cho toàn bộ ĐVVC này">🔄 Xoá phiên ĐVVC</button>
     </div>
     <div id="testResult" style="margin-top: 14px; color: var(--muted); font-size: 14px;"></div>
   </section>
@@ -296,6 +297,17 @@
     try {
       await api("/api/ops/logs", { method: "DELETE" });
       toast("Đã xoá", "Tất cả log OPS", "warn");
+      loadLogs();
+    } catch (e) { toast("Lỗi", String(e), "danger"); }
+  });
+
+  $("#btnResetCarrier").addEventListener("click", async () => {
+    const c = $("#testCarrier").value;
+    if (!c) { toast("Chú ý", "Hãy chọn 1 ĐVVC", "warn"); return; }
+    if (!confirm(`Xóa toàn bộ các phiên giao của ${c} khỏi hệ thống?\n(Các đơn hàng sẽ trở về trạng thái "chưa import" để tạo phiên mới)`)) return;
+    try {
+      const res = await api(`/api/sessions/carrier/${encodeURIComponent(c)}`, { method: "DELETE" });
+      toast("Thành công", res.message, "ok");
       loadLogs();
     } catch (e) { toast("Lỗi", String(e), "danger"); }
   });
