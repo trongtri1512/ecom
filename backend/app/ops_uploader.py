@@ -243,19 +243,7 @@ def upload_import(carrier: str, excel_path: str, template_id: int, partner_name:
             page.wait_for_timeout(1500)
 
             # 8) Đọc mã phiên do OPS cấp từ URL sau khi TẠO
-            #    Ví dụ URL: /#/tpl-sessions/detail/SPXCCEJDN26U hoặc ?id=SPXCCEJDN26U
-            import re
-            new_url = page.url
-            # Mã phiên OPS: các chuỗi dạng SPXCCE.../JTE.../BEXCCE... (chữ HOA + số, 8-32 ký tự)
-            m = re.search(r"([A-Z]{3,6}CCE[A-Z0-9]{4,}|JTE[A-Z0-9]{6,}|BEX[A-Z0-9]{6,}|[A-Z]{2,}[A-Z0-9]{8,})", new_url)
-            if m:
-                ops_session_id = m.group(1)
-            # Fallback: tìm trong text trang (VD tiêu đề "Phiên bàn giao SPXCCE...")
-            if not ops_session_id:
-                body = page.inner_text("body")
-                m2 = re.search(r"\b((?:SPXCCE|JTE|BEXCCE)[A-Z0-9]{4,20})\b", body)
-                if m2:
-                    ops_session_id = m2.group(1)
+            ops_session_id = _extract_session_id(page)
 
             body = page.inner_text("body")
             if "không có quyền" in body.lower() or "access denied" in body.lower():
@@ -279,16 +267,18 @@ def _extract_session_id(page) -> str:
     import re
     ops_session_id = ""
     new_url = page.url
-    m = re.search(
-        r"([A-Z]{3,6}CCE[A-Z0-9]{4,}|JTE[A-Z0-9]{6,}|BEX[A-Z0-9]{6,}|[A-Z]{2,}[A-Z0-9]{8,})",
-        new_url,
-    )
+    # Pattern chung cho nhiều hãng: 
+    # SPXCCE..., MVECCE..., JTE..., BEX...
+    pattern = r"([A-Z]{2,6}CCE[A-Z0-9]{4,20}|JTE[A-Z0-9]{6,20}|BEX[A-Z0-9]{6,20}|[A-Z]{2,}[A-Z0-9]{8,})"
+    
+    m = re.search(pattern, new_url)
     if m:
         ops_session_id = m.group(1)
+        
     if not ops_session_id:
         try:
             body = page.inner_text("body")
-            m2 = re.search(r"\b((?:SPXCCE|JTE|BEXCCE)[A-Z0-9]{4,20})\b", body)
+            m2 = re.search(r"\b" + pattern + r"\b", body)
             if m2:
                 ops_session_id = m2.group(1)
         except Exception:
