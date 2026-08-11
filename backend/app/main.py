@@ -483,24 +483,20 @@ def _try_auto_import():
             if len(rows) < batch:
                 continue  # chưa đủ batch
             codes = [r.code for r in rows]
-            # Tên file dùng timestamp cho duy nhất; session_id sẽ lấy từ OPS.
             stamp = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{carrier}"
-            content = export.to_import_xlsx(codes)
-            tmp_path = f"/tmp/{stamp}.xlsx"
-            with open(tmp_path, "wb") as f:
-                f.write(content)
-            print(f"[auto-import] {carrier} bắt đầu upload {len(codes)} đơn -> {tmp_path}")
-            result = ops_uploader.upload_import(carrier, tmp_path, template_id, partner)
+            print(f"[auto-import] {carrier} bắt đầu nhập {len(codes)} đơn qua scan_import")
+            # Dùng scan_import (gõ từng mã) thay vì upload file Excel.
+            result = ops_uploader.scan_import(carrier, codes, template_id, partner)
             if result.get("ok"):
-                # Ưu tiên mã do OPS cấp (VD SPXCCEJDN26U); nếu OPS không trả -> fallback stamp
                 session_id = result.get("ops_session_id") or stamp
                 for r in rows:
                     r.session_id = session_id
                 db.commit()
-                print(f"[auto-import] {carrier} OK session={session_id}")
-                _log_ops(db, "success", "auto_import", carrier, len(codes),
+                entered = result.get("codes_entered", len(codes))
+                print(f"[auto-import] {carrier} OK session={session_id} ({entered} mã)")
+                _log_ops(db, "success", "auto_import", carrier, entered,
                          session_id, f"OK, mã phiên: {session_id}", "")
-                events.publish("auto_import", {"carrier": carrier, "count": len(codes),
+                events.publish("auto_import", {"carrier": carrier, "count": entered,
                                                 "session_id": session_id})
             else:
                 err = result.get("error", "")
@@ -564,20 +560,19 @@ def ops_import_now(
             return {"status": "empty", "message": f"Không có đơn {carrier} nào ({hint})"}
         codes = [r.code for r in rows]
         stamp = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{carrier}"
-        tmp_path = f"/tmp/{stamp}.xlsx"
-        with open(tmp_path, "wb") as f:
-            f.write(export.to_import_xlsx(codes))
-        result = ops_uploader.upload_import(carrier, tmp_path, cfg["template_id"], cfg["partner"])
+        # Dùng scan_import (gõ từng mã) thay vì upload file Excel.
+        result = ops_uploader.scan_import(carrier, codes, cfg["template_id"], cfg["partner"])
         session_id = ""
         shot = result.get("screenshot_file", "")
+        entered = result.get("codes_entered", 0)
         if result.get("ok"):
             session_id = result.get("ops_session_id") or stamp
             for r in rows:
                 r.session_id = session_id
             db.commit()
-            _log_ops(db, "success", "manual_import", carrier, len(codes),
+            _log_ops(db, "success", "manual_import", carrier, entered,
                      session_id, f"OK, mã phiên: {session_id}", "")
-            events.publish("auto_import", {"carrier": carrier, "count": len(codes),
+            events.publish("auto_import", {"carrier": carrier, "count": entered,
                                             "session_id": session_id})
         else:
             _log_ops(db, "error", "manual_import", carrier, len(codes), "",
@@ -585,7 +580,7 @@ def ops_import_now(
             events.publish("auto_import_error", {"carrier": carrier,
                                                   "error": result.get("error", "")})
         return {"status": "ok" if result.get("ok") else "error",
-                "count": len(codes), "session_id": session_id,
+                "count": entered, "session_id": session_id,
                 "ops_session_id": result.get("ops_session_id", ""),
                 "error": result.get("error", "")}
     finally:

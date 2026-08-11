@@ -1,21 +1,130 @@
-"""Tự động import file Excel lên imv.ops.vnfai.com bằng Playwright.
+"""Tự động tạo phiên bàn giao trên imv.ops.vnfai.com bằng Playwright.
 
-Luồng: mở trang, login (nếu form login hiện), vào /tpl-sessions/new/{template_id},
-bấm nút IMPORT, chọn file Excel, xác nhận, chọn Đối tác vận chuyển, bấm TẠO.
+Hai phương thức:
+1. scan_import()  — nhập từng mã vào ô quét (ĐỀ XUẤT, đáng tin cậy hơn).
+2. upload_import() — upload file Excel qua dialog IMPORT (fallback).
 
 Ghi chú:
-- Selector login viết theo pattern linh hoạt (thử nhiều cách) vì tôi không có
-  quyền xem form login của bạn khi đã đăng nhập sẵn. Nếu login sai, chỉnh trong
-  hàm _login() theo id/name thật của form.
+- OPS dùng Keycloak SSO (auth.vnfai.com) để login.
 - Cần env: OPS_URL, OPS_USER, OPS_PASS, OPS_CARRIER_MAP (JSON).
 """
 from __future__ import annotations
 
 import os
 import time
+import random
 from typing import Optional
 
 from . import config
+
+
+def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: str,
+                headless: bool = True, timeout_ms: int = 60000) -> dict:
+    """Tạo phiên bàn giao bằng cách GÕ TỪNG MÃ vào ô quét trên OPS.
+
+    Luồng:
+    1. Login Keycloak
+    2. Vào /tpl-sessions/new/{template_id}
+    3. Chọn Đối tác vận chuyển
+    4. Gõ từng mã vào ô "Quét mã kiện hàng..." → Enter
+    5. Bấm TẠO
+
+    Trả {ok: bool, error: str, ops_session_id: str, codes_entered: int}.
+    """
+    from playwright.sync_api import sync_playwright
+
+    if not (config.OPS_USER and config.OPS_PASS):
+        return {"ok": False, "error": "Thiếu OPS_USER/OPS_PASS trong env"}
+    if not codes:
+        return {"ok": False, "error": "Danh sách mã rỗng"}
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=headless,
+                                    args=["--no-sandbox", "--disable-dev-shm-usage"])
+        context = browser.new_context(
+            user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
+            locale="vi-VN",
+        )
+        page = context.new_page()
+        page.set_default_timeout(timeout_ms)
+        try:
+            # 1) Login
+            _login(page)
+
+            # 2) Vào trang tạo phiên
+            page.goto(f"{config.OPS_URL}/#/tpl-sessions/new/{template_id}",
+                      wait_until="networkidle")
+            page.wait_for_timeout(2000)
+
+            # 3) Chọn Đối tác vận chuyển TRƯỚC khi nhập mã
+            _select_partner(page, partner_name)
+            page.wait_for_timeout(500)
+
+            # 4) Tìm ô nhập mã (ô quét mã kiện hàng)
+            scan_input = _find_first(page, [
+                "input[placeholder*='kiện hàng']",
+                "input[placeholder*='vận đơn']",
+                "input[placeholder*='đơn hàng']",
+                "input[placeholder*='Quét mã']",
+                "input[placeholder*='quét mã']",
+            ])
+            if not scan_input:
+                _save_screenshot(page, "scan_input_not_found")
+                return {"ok": False, "error": "Không tìm thấy ô nhập mã quét"}
+
+            # 5) Gõ từng mã → Enter
+            entered = 0
+            for code in codes:
+                code = code.strip()
+                if not code:
+                    continue
+                scan_input.fill(code)
+                page.wait_for_timeout(200)
+                scan_input.press("Enter")
+                page.wait_for_timeout(random.uniform(400, 800))
+                entered += 1
+                # Log tiến trình mỗi 50 mã.
+                if entered % 50 == 0:
+                    print(f"[scan-import] {carrier}: đã nhập {entered}/{len(codes)} mã")
+
+            print(f"[scan-import] {carrier}: nhập xong {entered} mã, chờ xử lý...")
+            page.wait_for_timeout(2000)
+            _save_screenshot(page, "after_scan_input")
+
+            # 6) Bấm TẠO
+            url_before = page.url
+            _click_first(page, [
+                "button:has-text('TẠO')",
+                ":text('TẠO')",
+                "button:has-text('Tạo')",
+            ])
+
+            # 7) Chờ redirect + đọc mã phiên
+            ops_session_id = ""
+            try:
+                page.wait_for_function(f"() => location.href !== {url_before!r}", timeout=10000)
+            except Exception:
+                pass
+            page.wait_for_timeout(2000)
+
+            ops_session_id = _extract_session_id(page)
+
+            body = page.inner_text("body")
+            if "không có quyền" in body.lower() or "access denied" in body.lower():
+                shot = _save_screenshot(page, "no_permission")
+                return {"ok": False, "error": "Không có quyền truy cập",
+                        "screenshot_file": shot, "codes_entered": entered}
+
+            _save_screenshot(page, "scan_complete")
+            return {"ok": True, "error": "", "ops_session_id": ops_session_id,
+                    "codes_entered": entered, "screenshot_file": ""}
+        except Exception as e:
+            shot = _save_screenshot(page, "scan_error")
+            return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:400]}",
+                    "screenshot_file": shot, "codes_entered": 0}
+        finally:
+            browser.close()
 
 
 def upload_import(carrier: str, excel_path: str, template_id: int, partner_name: str,
@@ -158,6 +267,28 @@ def upload_import(carrier: str, excel_path: str, template_id: int, partner_name:
                     "screenshot_file": shot}
         finally:
             browser.close()
+
+
+def _extract_session_id(page) -> str:
+    """Đọc mã phiên OPS từ URL hoặc nội dung trang sau khi bấm TẠO."""
+    import re
+    ops_session_id = ""
+    new_url = page.url
+    m = re.search(
+        r"([A-Z]{3,6}CCE[A-Z0-9]{4,}|JTE[A-Z0-9]{6,}|BEX[A-Z0-9]{6,}|[A-Z]{2,}[A-Z0-9]{8,})",
+        new_url,
+    )
+    if m:
+        ops_session_id = m.group(1)
+    if not ops_session_id:
+        try:
+            body = page.inner_text("body")
+            m2 = re.search(r"\b((?:SPXCCE|JTE|BEXCCE)[A-Z0-9]{4,20})\b", body)
+            if m2:
+                ops_session_id = m2.group(1)
+        except Exception:
+            pass
+    return ops_session_id
 
 
 def _save_screenshot(page, tag: str) -> str:
