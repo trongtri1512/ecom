@@ -43,7 +43,7 @@
     </select>
     <span class="spacer"></span>
     <button id="btnTrack" class="btn btn-ghost" title="Tra trạng thái lấy hàng (SPX) cho các đơn hôm nay">🔎 Tra trạng thái</button>
-    <button id="btnCarriers" class="btn btn-ghost" title="Thêm/sửa quy tắc nhận diện ĐVVC">⚙️ Quản lý ĐVVC</button>
+    <div class="spacer"></div>
     <button id="btnReclassify" class="btn btn-ghost" title="Chạy lại nhận diện ĐVVC cho toàn bộ mã">↻ Phân loại lại</button>
     <button id="btnImport" class="btn" title="Xuất file Excel để import lên hệ thống (chỉ đơn đã lấy hàng)">📤 Xuất file import</button>
     <button id="btnXlsx" class="btn btn-primary">Xuất Excel</button>
@@ -106,36 +106,6 @@
   </div> <!-- end tab-sessions -->
 
   <div id="toasts" class="toasts"></div>
-
-  <!-- Modal quản lý ĐVVC -->
-  <div id="carrierModal" class="modal" hidden>
-    <div class="modal-box">
-      <div class="modal-head">
-        <h2>⚙️ Quản lý Đơn vị vận chuyển</h2>
-        <button id="closeCarrier" class="icon-btn" title="Đóng">✕</button>
-      </div>
-      <p class="modal-hint">
-        Gõ <b>prefix</b> = chuỗi ký tự <b>đầu mã vận đơn</b> (ví dụ <code>SPXVN</code>, <code>8621</code>, <code>GYAB</code>).
-        Mã bắt đầu bằng prefix nào thì thuộc ĐVVC đó. <b>Ưu tiên</b> nhỏ được xét trước —
-        để prefix dài hơn ưu tiên nhỏ hơn. Sửa xong bấm <b>Lưu &amp; phân loại lại</b>.
-      </p>
-      <table class="carrier-table">
-        <thead>
-          <tr><th>Tên ĐVVC</th><th>Prefix (đầu mã)</th><th>Ưu tiên</th><th></th></tr>
-        </thead>
-        <tbody id="carrierRows"></tbody>
-      </table>
-      <div class="carrier-add">
-        <input id="newName" placeholder="Tên ĐVVC mới (vd: Lazada)" />
-        <input id="newPrefix" placeholder="Prefix (vd: LZD)" />
-        <input id="newPriority" type="number" value="100" title="Ưu tiên (nhỏ xét trước)" />
-        <button id="btnAddCarrier" class="btn btn-primary">➕ Thêm</button>
-      </div>
-      <div class="modal-foot">
-        <button id="btnSaveReclassify" class="btn btn-primary">💾 Lưu &amp; phân loại lại toàn bộ</button>
-      </div>
-    </div>
-  </div>
 
   <!-- Modal xuất file import -->
   <div id="importModal" class="modal" hidden>

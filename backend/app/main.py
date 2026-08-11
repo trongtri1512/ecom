@@ -385,9 +385,9 @@ def _do_tracking(carriers_supported: list[str]):
     from . import tracker
     db = SessionLocal()
     try:
-        # Lấy các mã hôm nay chưa tra (pickup_status rỗng), nhóm theo hãng hỗ trợ.
+        # Lấy các mã hôm nay chưa lấy hàng (rỗng hoặc pending), nhóm theo hãng hỗ trợ.
         frm, to = period_range("day")
-        stmt = select(Scan).where(Scan.pickup_status == "")
+        stmt = select(Scan).where(Scan.pickup_status.in_(["", "pending"]))
         if frm is not None:
             stmt = stmt.where(Scan.scanned_at >= frm, Scan.scanned_at <= to)
         rows = db.scalars(stmt).all()
@@ -959,3 +959,27 @@ def serve_admin(username: str = Depends(check_admin)):
 _WEB_DIR = os.getenv("WEB_DIR", "/app/web")
 if os.path.isdir(_WEB_DIR):
     app.mount("/", StaticFiles(directory=_WEB_DIR, html=True), name="web")
+
+# ----------------------------- Auto Tracking -----------------------------
+import threading
+import time
+
+def _auto_track_loop():
+    """Vòng lặp chạy ngầm tự động kiểm tra trạng thái lấy hàng mỗi 30 phút."""
+    from .tracker import CHECKERS
+    while True:
+        time.sleep(30 * 60) # 30 minutes
+        if not _track_running["on"]:
+            _track_running["on"] = True
+            try:
+                print("[auto-track] Đang tự động kiểm tra trạng thái lấy hàng...")
+                _do_tracking(list(CHECKERS.keys()))
+            except Exception as e:
+                print(f"[auto-track] Lỗi: {e}")
+            finally:
+                _track_running["on"] = False
+                
+@app.on_event("startup")
+def startup_event():
+    """Khởi chạy các luồng ngầm khi server start."""
+    threading.Thread(target=_auto_track_loop, daemon=True).start()
