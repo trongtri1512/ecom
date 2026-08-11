@@ -19,7 +19,7 @@ from . import config
 
 
 def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: str,
-                headless: bool = True, timeout_ms: int = 60000) -> dict:
+                stamp: str = "", headless: bool = True, timeout_ms: int = 600000) -> dict:
     """Tạo phiên bàn giao bằng cách GÕ TỪNG MÃ vào ô quét trên OPS.
 
     Luồng:
@@ -148,6 +148,16 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                 print("[scan-import] Bỏ qua lỗi khi cố gắng xóa kiện trùng:", e)
 
             _save_screenshot(page, "after_scan_input")
+            
+            # 5.6) Điền Ghi chú
+            if stamp:
+                try:
+                    note_area = page.locator("textarea[placeholder*='ghi chú'], textarea[placeholder*='Ghi chú']").first
+                    if note_area.is_visible():
+                        note_area.fill(stamp)
+                        page.wait_for_timeout(300)
+                except Exception:
+                    pass
 
             # 6) Bấm TẠO
             url_before = page.url
@@ -320,7 +330,7 @@ def _extract_session_id(page) -> str:
     ops_session_id = ""
     new_url = page.url
     # Pattern chung cho nhiều hãng: 
-    # SPXCCE..., MVECCE..., MVEC..., JTE..., BEX...
+    # Đa số các mã phiên OPS hiện nay đều bắt đầu bằng MVEC... hoặc CCE...
     pattern = r"(MVEC[A-Z0-9]{4,20}|[A-Z]{2,6}CCE[A-Z0-9]{4,20}|JTE[A-Z0-9]{6,20}|BEX[A-Z0-9]{6,20})"
     
     m = re.search(pattern, new_url)

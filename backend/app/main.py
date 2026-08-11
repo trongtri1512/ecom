@@ -486,7 +486,7 @@ def _try_auto_import():
             stamp = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{carrier}"
             print(f"[auto-import] {carrier} bắt đầu nhập {len(codes)} đơn qua scan_import")
             # Dùng scan_import (gõ từng mã) thay vì upload file Excel.
-            result = ops_uploader.scan_import(carrier, codes, template_id, partner)
+            result = ops_uploader.scan_import(carrier, codes, template_id, partner, stamp)
             if result.get("ok"):
                 session_id = result.get("ops_session_id") or stamp
                 failed_codes = result.get("failed_codes", [])
@@ -571,7 +571,7 @@ def ops_import_now(
         codes = [r.code for r in rows]
         stamp = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{carrier}"
         # Dùng scan_import (gõ từng mã) thay vì upload file Excel.
-        result = ops_uploader.scan_import(carrier, codes, cfg["template_id"], cfg["partner"])
+        result = ops_uploader.scan_import(carrier, codes, cfg["template_id"], cfg["partner"], stamp)
         session_id = ""
         shot = result.get("screenshot_file", "")
         entered = result.get("codes_entered", 0)
