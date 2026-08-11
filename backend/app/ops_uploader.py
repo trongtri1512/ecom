@@ -185,6 +185,27 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                 return {"ok": False, "error": "Không có quyền truy cập",
                         "screenshot_file": shot, "codes_entered": entered, "failed_codes": failed_codes}
 
+            # 8) Bấm BÀN GIAO 3PL hoặc BÀN GIAO
+            try:
+                clicked = _click_first(page, [
+                    "button:has-text('BÀN GIAO 3PL')",
+                    "button:has-text('Bàn giao 3PL')",
+                    "button:has-text('BÀN GIAO')",
+                    "button:has-text('Bàn giao')"
+                ])
+                if clicked:
+                    page.wait_for_timeout(2000)
+                    # Nếu có popup hỏi xác nhận bàn giao
+                    _click_first(page, [
+                        "button:has-text('XÁC NHẬN')",
+                        "button:has-text('Xác nhận')",
+                        "button:has-text('ĐỒNG Ý')",
+                        "button:has-text('Đồng ý')"
+                    ])
+                    page.wait_for_timeout(2000)
+            except Exception as click_err:
+                print(f"[scan_import] Lỗi khi bấm Bàn giao 3PL: {click_err}")
+
             _save_screenshot(page, "scan_complete")
             return {"ok": True, "error": "", "ops_session_id": ops_session_id,
                     "codes_entered": entered, "screenshot_file": "", "failed_codes": failed_codes}

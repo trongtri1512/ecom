@@ -250,6 +250,18 @@ class Sender:
             pass
         return None
 
+    def import_now(self, carrier: str):
+        """Kích hoạt đẩy thủ công đơn lên OPS cho 1 ĐVVC. (API: /api/ops/import-now)."""
+        try:
+            url = f"{self.cfg['url']}/api/ops/import-now?carrier={carrier}&limit=100&require_picked=true"
+            r = self.session.post(url, timeout=45)
+            if r.status_code == 200:
+                return r.json()
+            return {"status": "error", "error": f"HTTP {r.status_code}"}
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+        return None
+
     def close_basket(self):
         """Chốt 1 sọt cho máy này. Trả record sọt vừa tạo, hoặc None nếu lỗi."""
         try:
@@ -638,14 +650,50 @@ class AgentWindow:
                     badge.pack(side="left", padx=(10, 8), pady=6)
 
                 textcol = tk.Frame(card, bg=self.PANEL)
-                textcol.pack(side="left", fill="x", expand=True)
+                textcol.pack(side="left", fill="both", expand=True)
+                
+                # Tên ĐVVC
                 tk.Label(textcol, text=name, fg="#94a3b8", bg=self.PANEL,
                          font=("Segoe UI", 9)).pack(anchor="w")
-                val = tk.Label(textcol, text="0", fg="#e2e8f0", bg=self.PANEL,
+                
+                # Container cho Số lượng + Nút Bàn Giao
+                val_row = tk.Frame(textcol, bg=self.PANEL)
+                val_row.pack(fill="x", expand=True)
+                
+                val = tk.Label(val_row, text="0", fg="#e2e8f0", bg=self.PANEL,
                                font=("Segoe UI", 20, "bold"))
-                val.pack(anchor="w")
+                val.pack(side="left", anchor="w")
+                
+                # Nút Bàn giao 3PL
+                btn = tk.Button(val_row, text="Bàn giao 3PL",
+                                command=lambda c=name: self._post_carrier(c),
+                                bg="#3b82f6", fg="black", cursor="hand2",
+                                font=("Segoe UI", 8, "bold"), relief="flat", padx=6)
+                btn.pack(side="right", anchor="e", padx=(0, 10), pady=(4, 0))
+                
                 self._kpi_widgets[name] = val
             self._kpi_widgets[name].config(text=str(by.get(name, 0)))
+
+    def _post_carrier(self, carrier: str):
+        """Xử lý khi ấn nút Bàn giao 3PL cho 1 ĐVVC."""
+        from tkinter import messagebox
+        def worker():
+            res = self.state["sender"].import_now(carrier)
+            def show_result():
+                if res and res.get("status") == "ok":
+                    count = res.get("count", 0)
+                    sid = res.get("session_id", "")
+                    self.listbox.insert(0, f"{time.strftime('%H:%M:%S')}  📤 Bàn giao 3PL {carrier} ({count} đơn) - {sid}")
+                    messagebox.showinfo("Bàn giao thành công", f"Đã đẩy {count} đơn của {carrier} lên OPS.\nMã phiên: {sid}")
+                elif res and res.get("status") == "empty":
+                    messagebox.showwarning("Không có đơn", res.get("message", "Không có mã nào chờ lấy hàng."))
+                else:
+                    err = res.get("error", "Lỗi không xác định") if res else "Không kết nối được server"
+                    messagebox.showerror("Lỗi bàn giao", f"Lỗi khi đẩy {carrier}:\n{err}")
+            self.root.after(0, show_result)
+        
+        threading.Thread(target=worker, daemon=True).start()
+
 
     def _abbrev(self, name: str) -> str:
         """Chữ viết tắt cho badge fallback (khi không có logo)."""

@@ -480,55 +480,7 @@ $("#btnReclassify").addEventListener("click", async () => {
 
 
 
-/* ------------------------- Bàn giao 3PL thủ công ------------------------- */
-const manualPostModal = $("#manualPostModal");
-$("#btnManualPost").addEventListener("click", async () => {
-  manualPostModal.hidden = false;
-  $("#manualPostResult").textContent = "";
-  try {
-    const data = await api("/api/carriers");
-    const items = data.items || [];
-    const names = [...new Set(items.map((r) => r.name))];
-    $("#manualPostCarrier").innerHTML = '<option value="">— chọn ĐVVC —</option>' +
-      names.map((n) => `<option value="${escapeAttr(n)}">${escapeAttr(n)}</option>`).join("");
-  } catch (err) {
-    toast("Lỗi tải danh sách ĐVVC", String(err), "danger");
-  }
-});
-
-$("#closeManualPost").addEventListener("click", () => { manualPostModal.hidden = true; });
-manualPostModal.addEventListener("click", (e) => { if (e.target === manualPostModal) manualPostModal.hidden = true; });
-
-$("#btnConfirmManualPost").addEventListener("click", async () => {
-  const carrier = $("#manualPostCarrier").value;
-  if (!carrier) { toast("Chú ý", "Hãy chọn 1 ĐVVC", "warn"); return; }
-  const limit = parseInt($("#manualPostLimit").value, 10) || 100;
-  
-  $("#manualPostResult").innerHTML = `⏳ Đang bàn giao ${carrier} (tối đa ${limit} đơn)... Vui lòng đợi 15-30 giây.`;
-  $("#btnConfirmManualPost").disabled = true;
-  
-  try {
-    const q = new URLSearchParams({ carrier, limit: String(limit), require_picked: "true" });
-    const r = await api("/api/ops/import-now?" + q.toString(), { method: "POST" });
-    if (r.status === "ok") {
-      $("#manualPostResult").innerHTML = `✅ <b>${r.count} đơn</b> đã được bàn giao lên OPS. Mã phiên: <code>${escapeAttr(r.session_id)}</code>`;
-      toast("Thành công", `${carrier}: Bàn giao ${r.count} đơn`, "ok");
-      refresh();
-    } else if (r.status === "empty") {
-      $("#manualPostResult").textContent = "⚠️ " + r.message;
-      toast("Không có đơn", r.message, "warn");
-    } else {
-      $("#manualPostResult").innerHTML = `❌ Lỗi: <code>${escapeAttr(r.error)}</code>`;
-      toast("Lỗi bàn giao", r.error, "danger");
-    }
-  } catch (err) {
-    $("#manualPostResult").innerHTML = `❌ <code>${escapeAttr(String(err))}</code>`;
-    toast("Lỗi hệ thống", String(err), "danger");
-  } finally {
-    $("#btnConfirmManualPost").disabled = false;
-  }
-});
-
+/* ------------------------- Realtime SSE ------------------------- */
 function connectStream() {
   const es = new EventSource(API + "/api/stream");
   const conn = $("#conn"), connText = $("#connText");
