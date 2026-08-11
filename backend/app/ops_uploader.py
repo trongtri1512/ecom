@@ -73,6 +73,7 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
 
             # 4) Gõ từng mã → Enter (hoặc click nút >>)
             entered = 0
+            failed_codes = []
             for code in codes:
                 code = code.strip()
                 if not code:
@@ -97,6 +98,8 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                     for btn in page.locator("button:has-text('OK'), button:has-text('ĐỒNG Ý'), button:has-text('Đóng')").all():
                         if btn.is_visible():
                             print(f"[scan-import] Đóng thông báo lỗi cho mã {code}")
+                            if code not in failed_codes:
+                                failed_codes.append(code)
                             btn.click(force=True)
                             page.wait_for_timeout(300)
                 except Exception:
@@ -110,7 +113,6 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
             page.wait_for_timeout(2000)
 
             # 5.5) Tự động xóa các kiện trùng / lỗi trên bảng để nút TẠO được hiển thị
-            failed_codes = []
             try:
                 # Đóng các toast/modal cảnh báo chung nếu có
                 for _ in range(2):
