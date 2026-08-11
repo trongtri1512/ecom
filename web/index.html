@@ -44,6 +44,7 @@
     <span class="spacer"></span>
     <button id="btnTrack" class="btn btn-ghost" title="Tra trạng thái lấy hàng (SPX) cho các đơn hôm nay">🔎 Tra trạng thái</button>
     <div class="spacer"></div>
+    <button id="btnManualPost" class="btn btn-primary" style="background: linear-gradient(135deg, #f59e0b, #d97706); box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);" title="Đẩy đơn thủ công lên OPS">🚀 Bàn giao 3PL</button>
     <button id="btnReclassify" class="btn btn-ghost" title="Chạy lại nhận diện ĐVVC cho toàn bộ mã">↻ Phân loại lại</button>
     <button id="btnImport" class="btn" title="Xuất file Excel để import lên hệ thống (chỉ đơn đã lấy hàng)">📤 Xuất file import</button>
     <button id="btnXlsx" class="btn btn-primary">Xuất Excel</button>
@@ -106,6 +107,34 @@
   </div> <!-- end tab-sessions -->
 
   <div id="toasts" class="toasts"></div>
+
+  <!-- Modal Bàn Giao 3PL Thủ Công -->
+  <div id="manualPostModal" class="modal" hidden>
+    <div class="modal-box" style="max-width: 500px;">
+      <div class="modal-head">
+        <h2>🚀 Bàn giao 3PL (Thủ công)</h2>
+        <button id="closeManualPost" class="icon-btn" title="Đóng">✕</button>
+      </div>
+      <p class="modal-hint">
+        Tính năng này giúp bạn đẩy (post) các ĐVVC có ít đơn hàng lên OPS ngay lập tức (Ví dụ: GHN, Best Express) mà không cần chờ cấu hình tự động.
+      </p>
+      <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 20px;">
+        <label style="font-size: 13px; color: var(--muted); font-weight: 600;">Chọn ĐVVC cần bàn giao:</label>
+        <select id="manualPostCarrier" style="width: 100%; padding: 12px; font-size: 15px;">
+          <option value="">— Đang tải danh sách ĐVVC —</option>
+        </select>
+        
+        <label style="font-size: 13px; color: var(--muted); font-weight: 600; margin-top: 10px;">Số lượng tối đa muốn đẩy (Mặc định 100):</label>
+        <input id="manualPostLimit" type="number" value="100" style="background: rgba(15,23,42,0.6); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 12px; border-radius: 8px; font-size: 15px;" />
+      </div>
+      
+      <div id="manualPostResult" style="margin-top: 20px; font-size: 14px; color: var(--warn);"></div>
+
+      <div class="modal-foot" style="margin-top: 24px;">
+        <button id="btnConfirmManualPost" class="btn btn-primary" style="width: 100%; justify-content: center; padding: 12px; font-size: 15px;">📤 Tiến hành Bàn giao OPS</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Modal xuất file import -->
   <div id="importModal" class="modal" hidden>
