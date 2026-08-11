@@ -111,6 +111,17 @@
     <img id="shotImg" style="max-width:96vw;max-height:96vh;border:1px solid var(--line);border-radius:8px;background:#111;" />
   </div>
 
+  <!-- Modal xem text chi tiết -->
+  <div id="textModal" class="modal" hidden style="display:flex;align-items:center;justify-content:center;">
+    <div style="background:#1e293b; padding: 20px; border-radius: 8px; width: 600px; max-width: 90vw; border: 1px solid var(--line); box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+      <h3 style="margin-top:0; color: #fff;">Chi tiết Thông báo</h3>
+      <textarea id="textModalContent" readonly style="width: 100%; height: 200px; background: #0f172a; color: #e2e8f0; border: 1px solid var(--line); padding: 10px; border-radius: 4px; font-family: Consolas, monospace; font-size: 13px; resize: vertical; line-height: 1.5;"></textarea>
+      <div style="text-align: right; margin-top: 15px;">
+        <button class="btn btn-ghost" onclick="document.getElementById('textModal').hidden=true" style="color: #fff; border: 1px solid #475569;">Đóng</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toasts" class="toasts"></div>
 
   <script>
@@ -273,7 +284,7 @@
       <td>${esc(r.carrier)}</td>
       <td style="text-align:right">${r.count || 0}</td>
       <td style="font-family:Consolas,monospace;font-size:12px;">${esc(r.session_id || "")}</td>
-      <td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(r.message)}">${esc(r.message)}</td>
+      <td class="log-msg-cell" data-msg="${esc(r.message)}" style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;" title="Bấm để xem/copy chi tiết toàn bộ mã lỗi">${esc(r.message)}</td>
       <td>${shotCell}</td>
       <td><button class="btn-log-del icon-btn" title="Xoá dòng log">🗑️</button></td>
     </tr>`;
@@ -313,6 +324,13 @@
   });
 
   $("#logRows").addEventListener("click", async (e) => {
+    const msgCell = e.target.closest(".log-msg-cell");
+    if (msgCell) {
+      const msg = msgCell.getAttribute("data-msg") || "";
+      $("#textModalContent").value = msg;
+      $("#textModal").hidden = false;
+      return;
+    }
     const view = e.target.closest(".btn-viewshot");
     if (view) {
       $("#shotImg").src = "/api/ops/logs/" + view.dataset.id + "/screenshot?ts=" + Date.now();
