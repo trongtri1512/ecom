@@ -13,7 +13,11 @@ class ScanIn(BaseModel):
 
 
 class ScanUpdate(BaseModel):
-    """Sửa tay 1 bản ghi (supplier/note/carrier/pickup_status)."""
+    """Sửa tay 1 bản ghi (code/supplier/note/carrier/pickup_status).
+
+    Khi sửa `code`, frontend phải gửi kèm header `X-Delete-Password`.
+    """
+    code: Optional[str] = None  # sửa mã vận đơn (cần mật khẩu)
     supplier: Optional[str] = None
     note: Optional[str] = None
     carrier: Optional[str] = None

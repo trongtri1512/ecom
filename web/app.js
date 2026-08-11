@@ -83,7 +83,7 @@ function rowHtml(r, idx) {
     <td>${statusCell(r)}</td>
     <td>${fmtTime(r.scanned_at)}</td>
     <td>${escapeHtml(r.source_agent || "")}</td>
-    <td class="row-actions"><button class="icon-btn btn-del" title="Xoá">🗑️</button></td>
+    <td class="row-actions"><button class="icon-btn btn-edit" title="Sửa mã">✏️</button><button class="icon-btn btn-del" title="Xoá">🗑️</button></td>
   </tr>`;
 }
 
@@ -179,7 +179,7 @@ async function refresh() {
   await Promise.all([loadSummary(), loadRows()]);
 }
 
-/* ------------------------- Sự kiện bảng (đổi trạng thái / xoá) ------------------------- */
+/* ------------------------- Sự kiện bảng (đổi trạng thái / sửa mã / xoá) ------------------------- */
 // Bấm nút Trạng thái -> đổi Đã lấy <-> Chưa lấy (sửa tay).
 rowsEl.addEventListener("click", async (e) => {
   const st = e.target.closest(".status-btn");
@@ -196,6 +196,37 @@ rowsEl.addEventListener("click", async (e) => {
     loadRows();
   } catch (err) {
     toast("Lỗi cập nhật trạng thái", String(err), "danger");
+  }
+});
+
+// Bấm nút ✏️ Sửa mã vận đơn -> hỏi mã mới + mật khẩu.
+rowsEl.addEventListener("click", async (e) => {
+  const edit = e.target.closest(".btn-edit");
+  if (!edit) return;
+  const tr = edit.closest("tr");
+  const id = tr.dataset.id;
+  const codeCell = tr.querySelector(".code");
+  const oldCode = (codeCell.firstChild ? codeCell.firstChild.textContent : codeCell.textContent).trim();
+  const newCode = prompt("Nhập mã vận đơn mới:", oldCode);
+  if (newCode === null || newCode.trim() === "" || newCode.trim() === oldCode) return;
+  const pass = prompt("Nhập mật khẩu để sửa mã:");
+  if (pass === null) return;
+  try {
+    await api(`/api/scans/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "X-Delete-Password": pass },
+      body: JSON.stringify({ code: newCode.trim() }),
+    });
+    toast("Đã sửa mã", `${oldCode} → ${newCode.trim()}`, "ok");
+    refresh();
+  } catch (err) {
+    if (String(err).includes("mật khẩu") || String(err).includes("403")) {
+      toast("Sai mật khẩu", "Không sửa được", "danger");
+    } else if (String(err).includes("409") || String(err).includes("tồn tại")) {
+      toast("Mã đã tồn tại", `Mã ${newCode.trim()} đã có trong hệ thống`, "danger");
+    } else {
+      toast("Lỗi sửa mã", String(err), "danger");
+    }
   }
 });
 
@@ -260,18 +291,105 @@ $("#btnTrack").addEventListener("click", async () => {
   }
 });
 
-// Xuất file Excel để import (chỉ đơn ĐÃ lấy hàng, theo ĐVVC + số lượng)
-$("#btnImport").addEventListener("click", async () => {
-  const carrier = filterEl.value;
+// ---- Modal xuất file import (với preview danh sách) ----
+const importModal = $("#importModal");
+const impCarrier = $("#impCarrier");
+const impPeriod = $("#impPeriod");
+const impLimit = $("#impLimit");
+const impOnlyPicked = $("#impOnlyPicked");
+const impRows = $("#impRows");
+const impEmpty = $("#impEmpty");
+const impSummary = $("#impSummary");
+const btnImportDownload = $("#btnImportDownload");
+
+// Mở modal: đồng bộ ĐVVC từ dropdown chính, mặc định chọn ĐVVC đang lọc.
+$("#btnImport").addEventListener("click", () => {
+  // Cập nhật dropdown ĐVVC trong modal từ KPI data.
+  const cur = filterEl.value;
+  impCarrier.innerHTML = carrierOrder.map((c) =>
+    `<option value="${c}" ${c === cur ? "selected" : ""}>${c}</option>`
+  ).join("");
+  if (!impCarrier.value && carrierOrder.length > 0) {
+    impCarrier.value = carrierOrder[0];
+  }
+  // Đồng bộ period với dropdown chính.
+  impPeriod.value = periodEl.value || "day";
+  // Reset preview.
+  impRows.innerHTML = "";
+  impEmpty.hidden = true;
+  impSummary.hidden = true;
+  btnImportDownload.disabled = true;
+  importModal.hidden = false;
+  // Tự động preview nếu đã chọn ĐVVC.
+  if (impCarrier.value) doImportPreview();
+});
+
+$("#closeImport").addEventListener("click", () => { importModal.hidden = true; });
+importModal.addEventListener("click", (e) => { if (e.target === importModal) importModal.hidden = true; });
+
+async function doImportPreview() {
+  const carrier = impCarrier.value;
   if (!carrier) {
-    toast("Chọn ĐVVC", "Hãy chọn 1 ĐVVC (SPX/J&T…) ở ô lọc trước khi xuất file import", "warn");
+    toast("Chọn ĐVVC", "Chọn 1 ĐVVC để xem trước", "warn");
     return;
   }
-  const limitStr = prompt(`Xuất tối đa bao nhiêu đơn ${carrier} (đã lấy hàng, hôm nay)?`, "100");
-  if (limitStr === null) return;
-  const limit = parseInt(limitStr, 10) || 100;
-  const params = new URLSearchParams({ carrier, limit: String(limit) });
+  const params = new URLSearchParams({
+    carrier,
+    period: impPeriod.value || "day",
+    limit: String(parseInt(impLimit.value, 10) || 500),
+    only_picked: String(impOnlyPicked.checked),
+  });
+  try {
+    const data = await api("/api/export/import-file/preview?" + params.toString());
+    const items = data.items || [];
+    const total = data.total || 0;
+    impEmpty.hidden = items.length > 0;
+    impRows.innerHTML = items.map((r, i) => {
+      const picked = r.pickup_status === "picked";
+      const stTxt = picked ? "✔ Đã lấy" : r.pickup_status === "pending" ? "Chưa lấy" : "—";
+      const stCls = picked ? "st-picked" : r.pickup_status === "pending" ? "st-pending" : "";
+      return `<tr>
+        <td>${i + 1}</td>
+        <td class="code">${escapeHtml(r.code)}</td>
+        <td><span class="badge">${escapeHtml(r.carrier)}</span></td>
+        <td><span class="${stCls}">${stTxt}</span></td>
+        <td>${fmtTime(r.scanned_at)}</td>
+      </tr>`;
+    }).join("");
+    // Hiện tóm tắt.
+    const limitNum = parseInt(impLimit.value, 10) || 500;
+    const shown = Math.min(items.length, limitNum);
+    const periodLabel = impPeriod.selectedOptions[0] ? impPeriod.selectedOptions[0].textContent : "";
+    const pickedTxt = impOnlyPicked.checked ? ", chỉ đơn đã lấy hàng" : ", tất cả trạng thái";
+    impSummary.innerHTML = `<strong>${carrier}</strong> — ${periodLabel}: tổng <strong>${total}</strong> đơn khớp${pickedTxt}. File xuất sẽ gồm <strong>${shown}</strong> đơn.`;
+    impSummary.hidden = false;
+    btnImportDownload.disabled = items.length === 0;
+  } catch (err) {
+    toast("Lỗi preview", String(err), "danger");
+    impEmpty.hidden = false;
+    impEmpty.textContent = "Lỗi tải dữ liệu: " + String(err);
+    btnImportDownload.disabled = true;
+  }
+}
+
+// Bấm preview, hoặc đổi filter -> auto preview.
+$("#btnImportPreview").addEventListener("click", doImportPreview);
+impCarrier.addEventListener("change", doImportPreview);
+impPeriod.addEventListener("change", doImportPreview);
+impOnlyPicked.addEventListener("change", doImportPreview);
+
+// Xuất file Excel.
+btnImportDownload.addEventListener("click", () => {
+  const carrier = impCarrier.value;
+  if (!carrier) return;
+  const params = new URLSearchParams({
+    carrier,
+    period: impPeriod.value || "day",
+    limit: String(parseInt(impLimit.value, 10) || 100),
+    only_picked: String(impOnlyPicked.checked),
+  });
   window.location.href = API + "/api/export/import-file?" + params.toString();
+  toast("Đang tải", `File import ${carrier} đang được xuất…`, "ok");
 })
 
 $("#btnReclassify").addEventListener("click", async () => {

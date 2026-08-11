@@ -101,6 +101,68 @@
     </div>
   </div>
 
+  <!-- Modal xuất file import -->
+  <div id="importModal" class="modal" hidden>
+    <div class="modal-box" style="max-width:860px;">
+      <div class="modal-head">
+        <h2>📤 Xuất file import lên OPS</h2>
+        <button id="closeImport" class="icon-btn" title="Đóng">✕</button>
+      </div>
+      <div class="import-filters">
+        <div class="import-filter-group">
+          <label>ĐVVC</label>
+          <select id="impCarrier"></select>
+        </div>
+        <div class="import-filter-group">
+          <label>Khoảng thời gian</label>
+          <select id="impPeriod">
+            <option value="day" selected>Hôm nay</option>
+            <option value="yesterday">Hôm trước</option>
+            <option value="week">Tuần này</option>
+            <option value="last_week">Tuần trước</option>
+            <option value="month">Tháng này</option>
+            <option value="last_month">Tháng trước</option>
+            <option value="quarter">Quý này</option>
+            <option value="year">Năm nay</option>
+            <option value="all">Tất cả</option>
+          </select>
+        </div>
+        <div class="import-filter-group">
+          <label>Số lượng tối đa</label>
+          <input id="impLimit" type="number" value="100" min="1" max="5000" style="width:100px;" />
+        </div>
+        <div class="import-filter-group">
+          <label class="toggle-label">
+            <input id="impOnlyPicked" type="checkbox" checked />
+            Chỉ đơn đã lấy hàng
+          </label>
+        </div>
+        <div class="import-filter-group">
+          <button id="btnImportPreview" class="btn btn-primary">🔍 Xem trước</button>
+        </div>
+      </div>
+      <div id="impSummary" class="import-summary" hidden></div>
+      <div class="import-preview-wrap">
+        <table class="import-preview-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Mã vận đơn</th>
+              <th>ĐVVC</th>
+              <th>Trạng thái</th>
+              <th>Thời gian quét</th>
+            </tr>
+          </thead>
+          <tbody id="impRows"></tbody>
+        </table>
+        <div id="impEmpty" class="empty" hidden>Không có đơn hàng nào khớp điều kiện.</div>
+      </div>
+      <div class="modal-foot">
+        <button id="btnImportDownload" class="btn btn-primary" disabled>📥 Xuất file Excel</button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

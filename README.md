@@ -26,10 +26,13 @@ Quét mã vận đơn từ nhãn bằng **máy quét 2D**, tự động tổng h
   gốc + email Admin + agent kêu cảnh báo. **Không xoá dòng.**
 - ✅ **Cột Trạng thái lấy hàng**: "✔ Đã lấy hàng" / "ĐVVC chưa lấy hàng". Bấm để
   đổi tay, hoặc dùng **🔎 Tra trạng thái** (Playwright tự đọc trang hãng — hiện SPX).
+- ✅ **Sửa mã vận đơn** ngay trên web: bấm nút ✏️ cạnh mã → nhập mã mới → nhập
+  mật khẩu (`DELETE_PASSWORD`). Hệ thống kiểm tra trùng và tự động phân loại lại ĐVVC.
 - ✅ **Lọc thời gian**: Hôm nay / Hôm trước / Tuần này / Tuần trước / Tháng này /
   Tháng trước / Quý / Năm / Tất cả (giờ VN). Áp cho KPI, bảng và khi xuất file.
-- ✅ **Xuất Excel** (đầy đủ cột) + **📤 Xuất file import** (đúng format 1 cột "Mã"
-  để import lên hệ thống nội bộ; chỉ lấy đơn ĐÃ lấy hàng, giới hạn số lượng cấu hình được).
+- ✅ **Xuất Excel** (đầy đủ cột) + **📤 Xuất file import** có modal preview: chọn
+  ĐVVC + khoảng thời gian + toggle "chỉ đơn đã lấy hàng" → xem trước danh sách →
+  xuất đúng format 1 cột "Mã" để import lên hệ thống nội bộ.
 - ✅ Tìm kiếm, lọc theo ĐVVC, xoá (có **mật khẩu xoá** kiểm ở server).
 - ✅ Realtime qua SSE; agent có **cửa sổ giao diện** + **hàng đợi offline** khi mất mạng.
 
@@ -93,10 +96,17 @@ trong Docker) mở trang tracking của hãng, đọc DOM tìm dòng
 > server ở VN, tốc độ có giới hạn (delay giữa các mã để tránh bị chặn).
 
 ## Xuất file import lên hệ thống nội bộ
-Nút **📤 Xuất file import** (chọn 1 ĐVVC + số lượng) → `GET /api/export/import-file`
-xuất Excel đúng format (2 sheet: "Dữ Liệu" cột **Mã** + "Diễn Giải"), chỉ gồm các
-đơn **đã lấy hàng** trong ngày, tối đa `limit` đơn (mặc định 100). File này import
-thẳng lên hệ thống TPL nội bộ.
+Nút **📤 Xuất file import** mở modal cho phép:
+1. **Chọn ĐVVC** từ dropdown.
+2. **Chọn khoảng thời gian** (Hôm nay / Tuần này / Tháng này / Tất cả…).
+3. **Toggle** "Chỉ đơn đã lấy hàng" — bỏ tích để lấy tất cả đơn.
+4. **Xem trước danh sách** đơn hàng khớp điều kiện (preview realtime).
+5. Bấm **📥 Xuất file Excel** → `GET /api/export/import-file` xuất Excel đúng
+   format (2 sheet: "Dữ Liệu" cột **Mã** + "Diễn Giải"). File này import thẳng
+   lên hệ thống TPL nội bộ.
+
+API preview: `GET /api/export/import-file/preview?carrier=&period=&limit=&only_picked=`
+trả JSON danh sách + tổng số để hiển thị trong modal.
 
 ## Auto import lên imv.ops (Playwright)
 Bật `AUTO_IMPORT_ENABLED=true` trong `.env`. Khi 1 hãng có đủ `AUTO_IMPORT_BATCH`
@@ -125,10 +135,11 @@ Test cấu hình bằng: `curl -X POST 'http://<host>/api/ops/import-now?carrier
 | POST | `/api/scans` | Agent gửi mã (cần `X-API-Key`). 201 mới / 409 trùng |
 | GET | `/api/scans?q=&carrier=&period=&limit=&offset=` | Danh sách (lọc kỳ) |
 | GET | `/api/summary?period=` | Total + theo ĐVVC (lọc kỳ) |
-| PATCH | `/api/scans/{id}` | Sửa ĐVVC / `pickup_status` (picked\|pending) |
+| PATCH | `/api/scans/{id}` | Sửa ĐVVC / `pickup_status` / `code` (sửa mã cần `X-Delete-Password`) |
 | DELETE | `/api/scans/{id}` | Xoá (cần header `X-Delete-Password`) |
 | GET | `/api/export?format=xlsx\|csv&period=` | Xuất bảng đầy đủ (lọc kỳ) |
-| GET | `/api/export/import-file?carrier=&limit=` | Xuất Excel format import (đơn đã lấy) |
+| GET | `/api/export/import-file?carrier=&period=&limit=&only_picked=` | Xuất Excel format import |
+| GET | `/api/export/import-file/preview?carrier=&period=&limit=&only_picked=` | Preview danh sách trước khi xuất |
 | POST | `/api/track/run` | Tra trạng thái lấy hàng (Playwright, chạy nền) |
 | POST | `/api/ops/import-now?carrier=SPX` | Ép import ngay 1 hãng lên imv.ops (test) |
 | POST | `/api/scans/bulk-delete` | Xoá hàng loạt theo `ids` (cần `X-Delete-Password`) |

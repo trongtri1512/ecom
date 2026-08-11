@@ -225,10 +225,29 @@ def summary(
 
 
 @app.patch("/api/scans/{scan_id}")
-def update_scan(scan_id: int, payload: ScanUpdate, db: Session = Depends(get_db)):
+def update_scan(
+    scan_id: int,
+    payload: ScanUpdate,
+    db: Session = Depends(get_db),
+    x_delete_password: str = Header(default=""),
+):
     scan = db.get(Scan, scan_id)
     if not scan:
         raise HTTPException(status_code=404, detail="Không tìm thấy")
+    # Sửa mã vận đơn: cần mật khẩu + kiểm tra trùng.
+    if payload.code is not None:
+        new_code = payload.code.strip()
+        if not new_code:
+            raise HTTPException(status_code=400, detail="Mã vận đơn không được để trống")
+        if x_delete_password != config.DELETE_PASSWORD:
+            raise HTTPException(status_code=403, detail="Sai mật khẩu")
+        if new_code != scan.code:
+            existing = db.scalar(select(Scan).where(Scan.code == new_code))
+            if existing:
+                raise HTTPException(status_code=409, detail=f"Mã đã tồn tại: {new_code}")
+            scan.code = new_code
+            # Phân loại lại ĐVVC theo mã mới.
+            scan.carrier = detect_carrier(new_code, db)
     if payload.supplier is not None:
         scan.supplier = payload.supplier
     if payload.note is not None:
@@ -737,24 +756,55 @@ def track_run(background: BackgroundTasks):
 
 
 # ----------------------------- Xuất file -----------------------------
+def _import_query(carrier: str, period: str | None, only_picked: bool, db: Session):
+    """Tạo query chung cho preview + export import-file."""
+    frm, to = period_range(period or "day")
+    stmt = select(Scan).where(Scan.carrier == carrier).order_by(Scan.scanned_at.asc())
+    if frm is not None:
+        stmt = stmt.where(Scan.scanned_at >= frm, Scan.scanned_at <= to)
+    if only_picked:
+        stmt = stmt.where(Scan.pickup_status == "picked")
+    return stmt
+
+
+@app.get("/api/export/import-file/preview")
+def preview_import_file(
+    carrier: str = Query(..., description="ĐVVC cần xuất (vd SPX)"),
+    period: str | None = Query(default="day", description="day|week|month|quarter|year|all"),
+    limit: int = Query(default=500, ge=1, le=5000),
+    only_picked: bool = Query(default=True, description="chỉ xuất đơn đã lấy hàng"),
+    db: Session = Depends(get_db),
+):
+    """Preview danh sách mã sẽ được xuất — dùng cho modal trên web.
+
+    Trả danh sách mã + tổng số để user kiểm tra trước khi bấm Xuất.
+    """
+    stmt = _import_query(carrier, period, only_picked, db)
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = db.scalars(stmt.limit(limit)).all()
+    return {
+        "total": total,
+        "items": [{"id": r.id, "code": r.code, "carrier": r.carrier,
+                   "pickup_status": r.pickup_status or "",
+                   "scanned_at": r.scanned_at.isoformat() if r.scanned_at else None}
+                  for r in rows],
+    }
+
+
 @app.get("/api/export/import-file")
 def export_import_file(
     carrier: str = Query(..., description="ĐVVC cần xuất (vd SPX)"),
+    period: str | None = Query(default="day", description="day|week|month|quarter|year|all"),
     limit: int = Query(default=100, ge=1, le=5000),
     only_picked: bool = Query(default=True, description="chỉ xuất đơn đã lấy hàng"),
     db: Session = Depends(get_db),
 ):
     """Xuất Excel ĐÚNG format import lên imv.ops: 1 cột 'Mã'.
 
-    Lấy tối đa `limit` đơn của `carrier` trong NGÀY, theo thứ tự quét (từ đơn đầu
-    tiên trong ngày). Mặc định chỉ lấy đơn ĐÃ lấy hàng (only_picked=True).
+    Lấy tối đa `limit` đơn của `carrier` theo kỳ (mặc định hôm nay), theo thứ tự
+    quét (từ đơn đầu tiên). Mặc định chỉ lấy đơn ĐÃ lấy hàng (only_picked=True).
     """
-    frm, to = period_range("day")
-    stmt = select(Scan).where(Scan.carrier == carrier).order_by(Scan.scanned_at.asc())
-    if frm is not None:
-        stmt = stmt.where(Scan.scanned_at >= frm, Scan.scanned_at <= to)
-    if only_picked:
-        stmt = stmt.where(Scan.pickup_status == "picked")
+    stmt = _import_query(carrier, period, only_picked, db)
     rows = db.scalars(stmt.limit(limit)).all()
     codes = [r.code for r in rows]
     content = export.to_import_xlsx(codes)
