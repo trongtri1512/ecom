@@ -91,6 +91,40 @@ class Basket(Base):
         }
 
 
+class OpsLog(Base):
+    """Log các lần import lên imv.ops (thành công/lỗi), có thể kèm screenshot.
+
+    Xem/xoá qua trang Admin. `screenshot_file` là tên file trong OPS_LOGS_DIR
+    (không lưu đường dẫn tuyệt đối để dễ chuyển máy).
+    """
+    __tablename__ = "ops_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # "info" | "success" | "error"
+    level: Mapped[str] = mapped_column(String(16), nullable=False, default="info")
+    # "auto_import" | "manual_import" | "login" | ...
+    action: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    carrier: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    message: Mapped[str] = mapped_column(String(2000), nullable=False, default="")
+    screenshot_file: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "level": self.level,
+            "action": self.action,
+            "carrier": self.carrier,
+            "count": self.count,
+            "session_id": self.session_id,
+            "message": self.message,
+            "has_screenshot": bool(self.screenshot_file),
+        }
+
+
 class CarrierRule(Base):
     """Luật nhận diện ĐVVC theo prefix — sửa được ngay trên web, lưu trong DB.
 

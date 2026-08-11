@@ -109,18 +109,31 @@ def upload_import(carrier: str, excel_path: str, template_id: int, partner_name:
 
             body = page.inner_text("body")
             if "không có quyền" in body.lower() or "access denied" in body.lower():
-                return {"ok": False, "error": "Không có quyền truy cập (kiểm tra tài khoản)"}
-            return {"ok": True, "error": "", "ops_session_id": ops_session_id}
+                # Chụp cả trường hợp không quyền để Admin xem lại.
+                shot = _save_screenshot(page, "no_permission")
+                return {"ok": False, "error": "Không có quyền truy cập (kiểm tra tài khoản)",
+                        "screenshot_file": shot}
+            return {"ok": True, "error": "", "ops_session_id": ops_session_id,
+                    "screenshot_file": ""}
         except Exception as e:  # noqa: BLE001
-            # Chụp màn hình để debug
-            try:
-                shot = os.path.join("/tmp", f"ops_error_{int(time.time())}.png")
-                page.screenshot(path=shot, full_page=True)
-            except Exception:
-                shot = ""
-            return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]} (screenshot: {shot})"}
+            shot = _save_screenshot(page, "error")
+            return {"ok": False,
+                    "error": f"{type(e).__name__}: {str(e)[:400]}",
+                    "screenshot_file": shot}
         finally:
             browser.close()
+
+
+def _save_screenshot(page, tag: str) -> str:
+    """Lưu screenshot vào OPS_LOGS_DIR. Trả về TÊN FILE (không full path)."""
+    try:
+        os.makedirs(config.OPS_LOGS_DIR, exist_ok=True)
+        name = f"ops_{tag}_{int(time.time() * 1000)}.png"
+        path = os.path.join(config.OPS_LOGS_DIR, name)
+        page.screenshot(path=path, full_page=True)
+        return name
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _login(page):

@@ -57,3 +57,6 @@ try:
     OPS_CARRIER_MAP = _json.loads(_get("OPS_CARRIER_MAP", "{}") or "{}")
 except Exception:  # noqa: BLE001
     OPS_CARRIER_MAP = {}
+
+# Thư mục lưu log OPS (screenshot lỗi). Trong docker mount ra ngoài để không mất.
+OPS_LOGS_DIR = _get("OPS_LOGS_DIR", "/app/ops_logs")

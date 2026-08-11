@@ -43,9 +43,13 @@ services:
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_TLS: ${SMTP_TLS:-true}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+    volumes:
+      # Log OPS + screenshot lỗi — mount ra ngoài để không mất khi rebuild.
+      - ops_logs:/app/ops_logs
     ports:
       # Dokploy sẽ reverse-proxy domain vào cổng này. Đổi trái nếu trùng cổng.
       - "${APP_PORT:-8000}:8000"
 
 volumes:
   db_data:
+  ops_logs:

@@ -24,7 +24,7 @@ from . import config, events, export
 from .carriers import carrier_names, detect_carrier, seed_default_rules
 from .db import SessionLocal, get_db, init_db
 from .mailer import send_duplicate_alert
-from .models import Basket, CarrierRule, Scan
+from .models import Basket, CarrierRule, OpsLog, Scan
 from .schemas import BulkDeleteIn, CarrierRuleIn, ScanIn, ScanOut, ScanUpdate
 
 app = FastAPI(title="Scan Ecom API", version="1.0.0")
@@ -479,14 +479,36 @@ def _try_auto_import():
                     r.session_id = session_id
                 db.commit()
                 print(f"[auto-import] {carrier} OK session={session_id}")
+                _log_ops(db, "success", "auto_import", carrier, len(codes),
+                         session_id, f"OK, mã phiên: {session_id}", "")
                 events.publish("auto_import", {"carrier": carrier, "count": len(codes),
                                                 "session_id": session_id})
             else:
-                print(f"[auto-import] {carrier} LỖI: {result.get('error')}")
-                events.publish("auto_import_error", {"carrier": carrier,
-                                                      "error": result.get("error")})
+                err = result.get("error", "")
+                shot = result.get("screenshot_file", "")
+                print(f"[auto-import] {carrier} LỖI: {err}")
+                _log_ops(db, "error", "auto_import", carrier, len(codes), "", err, shot)
+                events.publish("auto_import_error", {"carrier": carrier, "error": err})
     finally:
         db.close()
+
+
+def _log_ops(db, level: str, action: str, carrier: str, count: int,
+             session_id: str, message: str, screenshot_file: str):
+    """Ghi 1 dòng OpsLog. Không raise nếu insert lỗi (không cản luồng chính)."""
+    try:
+        log = OpsLog(level=level, action=action, carrier=carrier, count=count,
+                     session_id=session_id, message=message[:2000] if message else "",
+                     screenshot_file=screenshot_file or "")
+        db.add(log)
+        db.commit()
+        events.publish("ops_log", log.as_dict())
+    except Exception as e:  # noqa: BLE001
+        print(f"[log_ops] không lưu được log: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
 
 @app.post("/api/ops/import-now")
@@ -528,14 +550,19 @@ def ops_import_now(
             f.write(export.to_import_xlsx(codes))
         result = ops_uploader.upload_import(carrier, tmp_path, cfg["template_id"], cfg["partner"])
         session_id = ""
+        shot = result.get("screenshot_file", "")
         if result.get("ok"):
             session_id = result.get("ops_session_id") or stamp
             for r in rows:
                 r.session_id = session_id
             db.commit()
+            _log_ops(db, "success", "manual_import", carrier, len(codes),
+                     session_id, f"OK, mã phiên: {session_id}", "")
             events.publish("auto_import", {"carrier": carrier, "count": len(codes),
                                             "session_id": session_id})
         else:
+            _log_ops(db, "error", "manual_import", carrier, len(codes), "",
+                     result.get("error", ""), shot)
             events.publish("auto_import_error", {"carrier": carrier,
                                                   "error": result.get("error", "")})
         return {"status": "ok" if result.get("ok") else "error",
@@ -544,6 +571,59 @@ def ops_import_now(
                 "error": result.get("error", "")}
     finally:
         db.close()
+
+
+# ----------------------------- OPS logs API -----------------------------
+@app.get("/api/ops/logs")
+def ops_logs_list(limit: int = Query(default=100, le=1000), db: Session = Depends(get_db)):
+    rows = db.scalars(select(OpsLog).order_by(OpsLog.id.desc()).limit(limit)).all()
+    return {"items": [r.as_dict() for r in rows]}
+
+
+@app.get("/api/ops/logs/{log_id}/screenshot")
+def ops_log_screenshot(log_id: int, db: Session = Depends(get_db)):
+    log = db.get(OpsLog, log_id)
+    if not log or not log.screenshot_file:
+        raise HTTPException(status_code=404, detail="Không có screenshot")
+    path = os.path.join(config.OPS_LOGS_DIR, log.screenshot_file)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="File screenshot đã bị xóa")
+    with open(path, "rb") as f:
+        content = f.read()
+    return Response(content=content, media_type="image/png")
+
+
+@app.delete("/api/ops/logs/{log_id}", status_code=204)
+def ops_log_delete(log_id: int, db: Session = Depends(get_db)):
+    log = db.get(OpsLog, log_id)
+    if not log:
+        raise HTTPException(status_code=404, detail="Không tìm thấy log")
+    # Xoá file screenshot nếu có.
+    if log.screenshot_file:
+        try:
+            os.remove(os.path.join(config.OPS_LOGS_DIR, log.screenshot_file))
+        except Exception:
+            pass
+    db.delete(log)
+    db.commit()
+    events.publish("ops_log", {"deleted": log_id})
+    return Response(status_code=204)
+
+
+@app.delete("/api/ops/logs", status_code=204)
+def ops_log_clear(db: Session = Depends(get_db)):
+    """Xoá TẤT CẢ log OPS + file screenshot kèm theo."""
+    logs = db.scalars(select(OpsLog)).all()
+    for log in logs:
+        if log.screenshot_file:
+            try:
+                os.remove(os.path.join(config.OPS_LOGS_DIR, log.screenshot_file))
+            except Exception:
+                pass
+        db.delete(log)
+    db.commit()
+    events.publish("ops_log", {"cleared": True})
+    return Response(status_code=204)
 
 
 @app.get("/api/sessions")
