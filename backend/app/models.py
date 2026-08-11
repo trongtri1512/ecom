@@ -54,6 +54,43 @@ class Scan(Base):
         }
 
 
+class Basket(Base):
+    """Sọt/lô hàng — chốt bằng nút 'Hoàn thành sọt' trên agent Windows.
+
+    Mỗi sọt gom các mã quét giữa 2 lần bấm nút (theo TỪNG máy). Lưu Total + phân
+    bố theo ĐVVC (JSON) để hiển thị nhanh, không phải query lại.
+    """
+    __tablename__ = "baskets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # Số thứ tự sọt trong ngày, theo TỪNG máy: 1, 2, 3...
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_agent: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    # Khoảng thời gian sọt: từ sau lần chốt trước tới now.
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # JSON string: {"SPX": 20, "J&T": 15, ...}. Đơn giản là text để hỗ trợ cả SQLite/Postgres.
+    by_carrier_json: Mapped[str] = mapped_column(String(2000), nullable=False, default="{}")
+
+    def as_dict(self) -> dict:
+        import json
+        try:
+            by_carrier = json.loads(self.by_carrier_json or "{}")
+        except Exception:
+            by_carrier = {}
+        return {
+            "id": self.id,
+            "seq": self.seq,
+            "name": f"Sọt {self.seq}",
+            "source_agent": self.source_agent,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "closed_at": self.closed_at.isoformat() if self.closed_at else None,
+            "total": self.total,
+            "by_carrier": by_carrier,
+        }
+
+
 class CarrierRule(Base):
     """Luật nhận diện ĐVVC theo prefix — sửa được ngay trên web, lưu trong DB.
 

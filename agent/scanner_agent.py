@@ -249,6 +249,29 @@ class Sender:
             pass
         return None
 
+    def close_basket(self):
+        """Chốt 1 sọt cho máy này. Trả record sọt vừa tạo, hoặc None nếu lỗi."""
+        try:
+            r = self.session.post(self.cfg["url"] + "/api/baskets/close",
+                                  params={"agent_name": self.cfg["name"]}, timeout=10)
+            if r.status_code == 200:
+                return r.json()
+        except requests.RequestException:
+            pass
+        return None
+
+    def list_baskets_today(self):
+        """Danh sách sọt hôm nay của máy này. Trả list, hoặc None nếu lỗi."""
+        try:
+            r = self.session.get(self.cfg["url"] + "/api/baskets",
+                                 params={"agent_name": self.cfg["name"], "period": "day"},
+                                 timeout=8)
+            if r.status_code == 200:
+                return r.json().get("items", [])
+        except requests.RequestException:
+            pass
+        return None
+
     def flush_loop(self):
         """Chạy nền: định kỳ gửi lại các mã đang xếp hàng khi có mạng."""
         while True:
@@ -400,12 +423,13 @@ class AgentWindow:
         self._logo_imgs = {}          # tên ĐVVC -> ImageTk (cache logo)
         self._sessions = {}           # by_carrier: {carrier: [{session_id,count,...}]}
         self._last_session_ids = set()  # để phát hiện phiên mới, hiện thông báo
+        self._baskets = []            # danh sách sọt hôm nay của máy này
 
         self.root = tk.Tk()
         self.root.title("Scan Ecom — Máy quét")
-        self.root.geometry("900x560")
+        self.root.geometry("980x720")
         self.root.configure(bg=self.BG)
-        self.root.minsize(760, 460)
+        self.root.minsize(820, 600)
 
         # ---- Header ----
         top = tk.Frame(self.root, bg=self.PANEL)
@@ -464,16 +488,32 @@ class AgentWindow:
         self.kpi_grid.columnconfigure(0, weight=1)
         self.kpi_grid.columnconfigure(1, weight=1)
 
-        # ---- Khối "Mã phiên hôm nay" (mỗi ĐVVC 1 dòng) ----
+        # ---- Khối "Mã phiên hôm nay" ----
         tk.Label(right, text="MÃ PHIÊN OPS HÔM NAY", fg="#94a3b8", bg=self.BG,
                  font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(14, 4))
         self.sessions_box = tk.Frame(right, bg=self.PANEL)
-        self.sessions_box.pack(fill="both", expand=True)
+        self.sessions_box.pack(fill="x")
         self.sessions_empty = tk.Label(self.sessions_box,
                                        text="  (chưa có phiên nào import lên OPS)",
                                        fg="#64748b", bg=self.PANEL,
                                        font=("Segoe UI", 9, "italic"))
         self.sessions_empty.pack(anchor="w", padx=12, pady=8)
+
+        # ---- Khối "Các sọt hôm nay" + nút Hoàn thành sọt ----
+        basket_head = tk.Frame(right, bg=self.BG)
+        basket_head.pack(fill="x", pady=(14, 4))
+        tk.Label(basket_head, text="CÁC SỌT HÔM NAY (MÁY NÀY)",
+                 fg="#94a3b8", bg=self.BG, font=("Segoe UI", 9, "bold")).pack(side="left")
+        tk.Button(basket_head, text="✅ Hoàn thành sọt", command=self._close_basket,
+                  bg="#16a34a", fg="white", relief="flat",
+                  font=("Segoe UI", 10, "bold"), padx=12, pady=4).pack(side="right")
+        self.baskets_box = tk.Frame(right, bg=self.PANEL)
+        self.baskets_box.pack(fill="both", expand=True)
+        self.baskets_empty = tk.Label(self.baskets_box,
+                                      text="  (chưa có sọt nào — bấm 'Hoàn thành sọt' để chốt sọt đầu tiên)",
+                                      fg="#64748b", bg=self.PANEL,
+                                      font=("Segoe UI", 9, "italic"))
+        self.baskets_empty.pack(anchor="w", padx=12, pady=8)
 
         # ---- Nút điều khiển ----
         btns = tk.Frame(self.root, bg=self.BG)
@@ -517,29 +557,27 @@ class AgentWindow:
     def _start_summary_loop(self):
         def loop():
             while True:
-                s = self.state["sender"].get_summary_today()
-                if s is not None:
-                    with self._summary_lock:
-                        self._summary = s
-                sess = self.state["sender"].get_sessions_today()
-                if sess is not None:
-                    with self._summary_lock:
-                        self._sessions = sess
+                self._pull_all()
                 time.sleep(5)  # tự làm mới mỗi 5 giây
         threading.Thread(target=loop, daemon=True).start()
 
+    def _pull_all(self):
+        s = self.state["sender"].get_summary_today()
+        if s is not None:
+            with self._summary_lock:
+                self._summary = s
+        sess = self.state["sender"].get_sessions_today()
+        if sess is not None:
+            with self._summary_lock:
+                self._sessions = sess
+        bs = self.state["sender"].list_baskets_today()
+        if bs is not None:
+            with self._summary_lock:
+                self._baskets = bs
+
     def refresh_summary_now(self):
         """Gọi ngay sau khi quét để số cập nhật nhanh (không đợi 5s)."""
-        def once():
-            s = self.state["sender"].get_summary_today()
-            if s is not None:
-                with self._summary_lock:
-                    self._summary = s
-            sess = self.state["sender"].get_sessions_today()
-            if sess is not None:
-                with self._summary_lock:
-                    self._sessions = sess
-        threading.Thread(target=once, daemon=True).start()
+        threading.Thread(target=self._pull_all, daemon=True).start()
 
     def _render_summary(self):
         with self._summary_lock:
@@ -643,6 +681,53 @@ class AgentWindow:
                 self.listbox.insert(0, f"{time.strftime('%H:%M:%S')}  📤 Import OPS   {carrier}: {sid}")
                 self.listbox.itemconfig(0, fg="#3b82f6")
 
+    # --- Sọt ---
+    def _close_basket(self):
+        """Bấm nút Hoàn thành sọt: gọi API server, thông báo kết quả."""
+        def do():
+            result = self.state["sender"].close_basket()
+            if result is None:
+                # về main thread để cảnh báo (đơn giản: log vào listbox)
+                self.root.after(0, lambda: self.listbox.insert(0,
+                    f"{time.strftime('%H:%M:%S')}  ✖ Lỗi     Không chốt được sọt (mất mạng?)"))
+                self.root.after(0, lambda: self.listbox.itemconfig(0, fg="#ef4444"))
+                return
+            name = result.get("name", "Sọt ?")
+            total = result.get("total", 0)
+            by = result.get("by_carrier", {})
+            detail = " | ".join(f"{k}:{v}" for k, v in by.items()) or "(rỗng)"
+            self.root.after(0, lambda: self.listbox.insert(0,
+                f"{time.strftime('%H:%M:%S')}  ✅ Chốt {name}  Total {total} — {detail}"))
+            self.root.after(0, lambda: self.listbox.itemconfig(0, fg="#22c55e"))
+            self.root.after(0, self._pull_all)  # cập nhật danh sách sọt ngay
+        threading.Thread(target=do, daemon=True).start()
+
+    def _render_baskets(self):
+        with self._summary_lock:
+            data = list(self._baskets or [])
+        for w in self.baskets_box.winfo_children():
+            w.destroy()
+        if not data:
+            self.baskets_empty = tk.Label(self.baskets_box,
+                text="  (chưa có sọt nào — bấm 'Hoàn thành sọt' để chốt sọt đầu tiên)",
+                fg="#64748b", bg=self.PANEL, font=("Segoe UI", 9, "italic"))
+            self.baskets_empty.pack(anchor="w", padx=12, pady=8)
+            return
+        for b in data:
+            row = tk.Frame(self.baskets_box, bg=self.PANEL)
+            row.pack(fill="x", padx=10, pady=3)
+            tk.Label(row, text=b.get("name", "Sọt ?"), fg="#e2e8f0", bg=self.PANEL,
+                     font=("Segoe UI", 10, "bold"), width=10, anchor="w").pack(side="left")
+            tk.Label(row, text=f"Total {b.get('total', 0)}", fg="#4ade80", bg=self.PANEL,
+                     font=("Segoe UI", 10, "bold"), width=12, anchor="w").pack(side="left")
+            by = b.get("by_carrier", {})
+            detail = "   ".join(f"{k}: {v}" for k, v in by.items()) or "(rỗng)"
+            tk.Label(row, text=detail, fg="#cbd5e1", bg=self.PANEL,
+                     font=("Consolas", 10), anchor="w").pack(side="left", fill="x", expand=True)
+            closed = (b.get("closed_at") or "")[11:19]  # HH:MM:SS UTC
+            tk.Label(row, text=closed, fg="#64748b", bg=self.PANEL,
+                     font=("Consolas", 9)).pack(side="right", padx=6)
+
     # --- vòng lặp cập nhật GUI ---
     def _poll(self):
         try:
@@ -659,6 +744,7 @@ class AgentWindow:
             self.status_lbl.config(text="● Sẵn sàng", fg="#22c55e")
         self._render_summary()
         self._render_sessions()
+        self._render_baskets()
         self.root.after(500, self._poll)
 
     def _add_row(self, ev):

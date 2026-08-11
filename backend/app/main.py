@@ -24,7 +24,7 @@ from . import config, events, export
 from .carriers import carrier_names, detect_carrier, seed_default_rules
 from .db import SessionLocal, get_db, init_db
 from .mailer import send_duplicate_alert
-from .models import CarrierRule, Scan
+from .models import Basket, CarrierRule, Scan
 from .schemas import BulkDeleteIn, CarrierRuleIn, ScanIn, ScanOut, ScanUpdate
 
 app = FastAPI(title="Scan Ecom API", version="1.0.0")
@@ -520,6 +520,67 @@ def list_sessions(
             "last": last.isoformat() if last else None,
         })
     return {"by_carrier": by_carrier}
+
+
+# ----------------------------- Sọt (basket) -----------------------------
+@app.post("/api/baskets/close")
+def close_basket(
+    agent_name: str = Query(..., description="tên máy quét (trùng source_agent)"),
+    db: Session = Depends(get_db),
+):
+    """Chốt 1 sọt: gom các mã QUÉT BỞI máy này từ sau sọt trước tới now.
+
+    Nếu chưa có sọt nào hôm nay -> lấy từ 00:00 hôm nay. Trả record sọt mới.
+    """
+    import json
+    now = datetime.now(timezone.utc)
+    frm, _ = period_range("day")
+    # Tìm sọt CUỐI CÙNG hôm nay của agent này để lấy mốc bắt đầu.
+    last_basket = db.scalar(
+        select(Basket).where(Basket.source_agent == agent_name)
+        .where(Basket.closed_at >= frm)
+        .order_by(Basket.seq.desc()).limit(1)
+    )
+    started_at = last_basket.closed_at if last_basket else frm
+    next_seq = (last_basket.seq + 1) if last_basket else 1
+
+    # Đếm các mã quét bởi agent này trong khoảng (started_at, now].
+    rows = db.execute(
+        select(Scan.carrier, func.count())
+        .where(Scan.source_agent == agent_name,
+               Scan.scanned_at > started_at, Scan.scanned_at <= now)
+        .group_by(Scan.carrier)
+    ).all()
+    by_carrier = {c: int(n) for c, n in rows}
+    total = sum(by_carrier.values())
+
+    basket = Basket(
+        seq=next_seq, source_agent=agent_name,
+        started_at=started_at, closed_at=now,
+        total=total, by_carrier_json=json.dumps(by_carrier, ensure_ascii=False),
+    )
+    db.add(basket)
+    db.commit()
+    db.refresh(basket)
+    events.publish("basket_close", basket.as_dict())
+    return basket.as_dict()
+
+
+@app.get("/api/baskets")
+def list_baskets(
+    agent_name: str | None = Query(default=None),
+    period: str | None = Query(default="day"),
+    db: Session = Depends(get_db),
+):
+    """Danh sách các sọt (lọc theo agent + kỳ)."""
+    stmt = select(Basket).order_by(Basket.closed_at.desc())
+    if agent_name:
+        stmt = stmt.where(Basket.source_agent == agent_name)
+    frm, to = period_range(period)
+    if frm is not None:
+        stmt = stmt.where(Basket.closed_at >= frm, Basket.closed_at <= to)
+    rows = db.scalars(stmt).all()
+    return {"items": [r.as_dict() for r in rows]}
 
 
 @app.post("/api/track/run")
