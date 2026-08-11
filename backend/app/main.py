@@ -312,7 +312,11 @@ def create_carrier_rule(payload: CarrierRuleIn, db: Session = Depends(get_db)):
     prefix = payload.prefix.strip()
     if not name or not prefix:
         raise HTTPException(status_code=400, detail="Tên ĐVVC và prefix không được để trống")
-    rule = CarrierRule(name=name, prefix=prefix, priority=payload.priority)
+    rule = CarrierRule(name=name, prefix=prefix, priority=payload.priority,
+                       auto_import_enabled=payload.auto_import_enabled,
+                       auto_import_batch=payload.auto_import_batch,
+                       ops_template_id=payload.ops_template_id,
+                       ops_partner=payload.ops_partner.strip())
     db.add(rule)
     db.commit()
     db.refresh(rule)
@@ -332,6 +336,10 @@ def update_carrier_rule(rule_id: int, payload: CarrierRuleIn, db: Session = Depe
     rule.name = name
     rule.prefix = prefix
     rule.priority = payload.priority
+    rule.auto_import_enabled = payload.auto_import_enabled
+    rule.auto_import_batch = payload.auto_import_batch
+    rule.ops_template_id = payload.ops_template_id
+    rule.ops_partner = payload.ops_partner.strip()
     db.commit()
     db.refresh(rule)
     events.publish("carriers", {"action": "update"})
@@ -393,28 +401,67 @@ def _do_tracking(carriers_supported: list[str]):
         _try_auto_import()
 
 
+def _get_ops_config_for_carrier(db, carrier: str) -> dict | None:
+    """Đọc cấu hình OPS cho 1 hãng: ưu tiên DB (carrier_rules), fallback env.
+
+    Trả {enabled, batch, template_id, partner} hoặc None nếu không cấu hình.
+    """
+    # Ưu tiên DB: lấy hàng CarrierRule có name = carrier, ưu tiên nhỏ nhất.
+    rule = db.scalar(
+        select(CarrierRule).where(CarrierRule.name == carrier)
+        .order_by(CarrierRule.priority, CarrierRule.id).limit(1)
+    )
+    if rule and rule.ops_partner:  # chỉ dùng DB nếu đã điền partner
+        return {
+            "enabled": bool(rule.auto_import_enabled),
+            "batch": int(rule.auto_import_batch or 100),
+            "template_id": int(rule.ops_template_id or 2),
+            "partner": rule.ops_partner,
+        }
+    # Fallback env
+    env_map = (config.OPS_CARRIER_MAP or {}).get(carrier)
+    if env_map:
+        return {
+            "enabled": bool(config.AUTO_IMPORT_ENABLED),
+            "batch": int(config.AUTO_IMPORT_BATCH or 100),
+            "template_id": int(env_map.get("template_id", 2)),
+            "partner": env_map.get("partner", carrier),
+        }
+    return None
+
+
 def _try_auto_import():
-    """Với mỗi hãng có trong OPS_CARRIER_MAP: nếu có >= AUTO_IMPORT_BATCH đơn
-    'picked' hôm nay chưa được import (session_id=""), xuất Excel + upload lên ops
-    + gán session_id cho các mã trong batch để không import lại.
+    """Duyệt tất cả ĐVVC có cấu hình auto import (DB hoặc env): nếu có >= batch
+    đơn 'picked' hôm nay chưa import -> xuất Excel + upload + gán session_id.
     """
     from . import ops_uploader
-    if not (config.OPS_USER and config.OPS_PASS and config.OPS_CARRIER_MAP):
+    if not (config.OPS_USER and config.OPS_PASS):
         return
     frm, to = period_range("day")
     db = SessionLocal()
     try:
-        for carrier, cfg in config.OPS_CARRIER_MAP.items():
-            template_id = int(cfg.get("template_id", 2))
-            partner = cfg.get("partner", carrier)
+        # Lấy danh sách các name (ĐVVC) có config trong DB HOẶC env.
+        names_db = [r[0] for r in db.execute(
+            select(CarrierRule.name).where(CarrierRule.auto_import_enabled == True)
+            .distinct()
+        ).all()]
+        names_env = list((config.OPS_CARRIER_MAP or {}).keys()) if config.AUTO_IMPORT_ENABLED else []
+        names = list(dict.fromkeys(names_db + names_env))
+        for carrier in names:
+            cfg = _get_ops_config_for_carrier(db, carrier)
+            if not cfg or not cfg["enabled"]:
+                continue
+            template_id = cfg["template_id"]
+            partner = cfg["partner"]
+            batch = cfg["batch"]
             stmt = (select(Scan).where(Scan.carrier == carrier,
                                        Scan.pickup_status == "picked",
                                        Scan.session_id == "")
                     .order_by(Scan.scanned_at.asc()))
             if frm is not None:
                 stmt = stmt.where(Scan.scanned_at >= frm, Scan.scanned_at <= to)
-            rows = db.scalars(stmt.limit(config.AUTO_IMPORT_BATCH)).all()
-            if len(rows) < config.AUTO_IMPORT_BATCH:
+            rows = db.scalars(stmt.limit(batch)).all()
+            if len(rows) < batch:
                 continue  # chưa đủ batch
             codes = [r.code for r in rows]
             # Tên file dùng timestamp cho duy nhất; session_id sẽ lấy từ OPS.
@@ -443,39 +490,54 @@ def _try_auto_import():
 
 
 @app.post("/api/ops/import-now")
-def ops_import_now(carrier: str = Query(...)):
-    """Kích hoạt import ngay 1 hãng (không đợi đủ batch). Dùng để test cấu hình."""
+def ops_import_now(
+    carrier: str = Query(..., description="Tên ĐVVC (khớp name trong bảng carrier_rules)"),
+    limit: int = Query(default=0, ge=0, description="0 = dùng batch trong cấu hình"),
+    require_picked: bool = Query(default=True, description="False = post CẢ đơn chưa tra pickup"),
+):
+    """Kích hoạt import ngay 1 hãng lên OPS (không đợi đủ batch, dùng để test).
+
+    Đọc cấu hình template_id/partner từ DB (carrier_rules) trước, fallback env.
+    """
     from . import ops_uploader
-    cfg = (config.OPS_CARRIER_MAP or {}).get(carrier)
-    if not cfg:
-        raise HTTPException(status_code=400, detail=f"OPS_CARRIER_MAP chưa có '{carrier}'")
     if not (config.OPS_USER and config.OPS_PASS):
         raise HTTPException(status_code=400, detail="Thiếu OPS_USER/OPS_PASS trong env")
-    frm, to = period_range("day")
     db = SessionLocal()
     try:
+        cfg = _get_ops_config_for_carrier(db, carrier)
+        if not cfg:
+            raise HTTPException(status_code=400,
+                                detail=f"Chưa cấu hình OPS cho '{carrier}' (điền ops_partner trong Admin hoặc OPS_CARRIER_MAP)")
+        batch = int(limit) if limit else cfg["batch"]
+        frm, to = period_range("day")
         stmt = (select(Scan).where(Scan.carrier == carrier,
-                                   Scan.pickup_status == "picked",
                                    Scan.session_id == "")
                 .order_by(Scan.scanned_at.asc()))
+        if require_picked:
+            stmt = stmt.where(Scan.pickup_status == "picked")
         if frm is not None:
             stmt = stmt.where(Scan.scanned_at >= frm, Scan.scanned_at <= to)
-        rows = db.scalars(stmt.limit(config.AUTO_IMPORT_BATCH)).all()
+        rows = db.scalars(stmt.limit(batch)).all()
         if not rows:
-            return {"status": "empty", "message": "Không có đơn 'picked' chưa import"}
+            hint = "picked & chưa import" if require_picked else "chưa import"
+            return {"status": "empty", "message": f"Không có đơn {carrier} nào ({hint})"}
         codes = [r.code for r in rows]
         stamp = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{carrier}"
         tmp_path = f"/tmp/{stamp}.xlsx"
         with open(tmp_path, "wb") as f:
             f.write(export.to_import_xlsx(codes))
-        result = ops_uploader.upload_import(carrier, tmp_path, int(cfg["template_id"]),
-                                            cfg.get("partner", carrier))
+        result = ops_uploader.upload_import(carrier, tmp_path, cfg["template_id"], cfg["partner"])
         session_id = ""
         if result.get("ok"):
             session_id = result.get("ops_session_id") or stamp
             for r in rows:
                 r.session_id = session_id
             db.commit()
+            events.publish("auto_import", {"carrier": carrier, "count": len(codes),
+                                            "session_id": session_id})
+        else:
+            events.publish("auto_import_error", {"carrier": carrier,
+                                                  "error": result.get("error", "")})
         return {"status": "ok" if result.get("ok") else "error",
                 "count": len(codes), "session_id": session_id,
                 "ops_session_id": result.get("ops_session_id", ""),
@@ -684,6 +746,15 @@ def health():
 
 
 # ----------------------------- Phục vụ web app tĩnh -----------------------------
+from fastapi.responses import RedirectResponse
+
+
+@app.get("/admin")
+def _admin_redirect():
+    """URL đẹp /admin -> file admin.html tĩnh."""
+    return RedirectResponse(url="/admin.html")
+
+
 # Nếu thư mục web được mount vào (Docker), backend phục vụ luôn UI ở "/".
 _WEB_DIR = os.getenv("WEB_DIR", "/app/web")
 if os.path.isdir(_WEB_DIR):

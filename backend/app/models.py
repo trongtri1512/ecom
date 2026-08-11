@@ -106,6 +106,12 @@ class CarrierRule(Base):
     prefix: Mapped[str] = mapped_column(String(64), nullable=False)
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # ---- Cấu hình auto import lên imv.ops (áp cho ĐVVC name của luật này) ----
+    # Nhiều luật cùng name -> lấy giá trị của luật có priority NHỎ NHẤT.
+    auto_import_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
+    auto_import_batch: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    ops_template_id: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    ops_partner: Mapped[str] = mapped_column(String(128), nullable=False, default="")
 
     def as_dict(self) -> dict:
         return {
@@ -113,4 +119,8 @@ class CarrierRule(Base):
             "name": self.name,
             "prefix": self.prefix,
             "priority": self.priority,
+            "auto_import_enabled": bool(self.auto_import_enabled),
+            "auto_import_batch": self.auto_import_batch,
+            "ops_template_id": self.ops_template_id,
+            "ops_partner": self.ops_partner,
         }

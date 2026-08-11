@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scan Ecom — Admin</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">⚙️ Scan Ecom Admin <span class="sub">Quản lý ĐVVC + Auto import OPS</span></div>
+    <div class="status">
+      <a href="/" class="btn btn-ghost" style="text-decoration:none">← Về trang quét</a>
+    </div>
+  </header>
+
+  <section style="padding: 20px;">
+    <h3 style="margin: 0 0 8px;">Quy tắc nhận diện ĐVVC + Auto import OPS</h3>
+    <p style="color: var(--muted); font-size: 13px; line-height: 1.6; margin: 0 0 16px;">
+      Mỗi dòng = 1 <b>prefix</b> (chuỗi đầu mã vận đơn) gán cho 1 <b>ĐVVC</b>.
+      1 ĐVVC có thể có <b>nhiều prefix</b> — chỉ cần thêm nhiều dòng cùng "Tên ĐVVC".
+      Ưu tiên nhỏ hơn được xét trước. Cột <b>Auto</b> bật thì server sẽ tự upload
+      lên OPS khi đủ <b>Batch</b> đơn "đã lấy hàng" chưa import.
+    </p>
+
+    <div class="tablewrap" style="padding: 0;">
+      <table style="min-width: 1200px;">
+        <thead>
+          <tr>
+            <th>Tên ĐVVC</th>
+            <th>Prefix (đầu mã)</th>
+            <th>Ưu tiên</th>
+            <th>Auto</th>
+            <th>Batch</th>
+            <th>Template ID</th>
+            <th>Đối tác OPS (partner)</th>
+            <th></th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="adminRows"></tbody>
+      </table>
+    </div>
+
+    <div class="carrier-add" style="margin-top: 20px; grid-template-columns: 1fr 1fr 90px 60px 90px 90px 1fr auto;">
+      <input id="nName" placeholder="Tên ĐVVC (vd: J&T)" />
+      <input id="nPrefix" placeholder="Prefix (vd: 8621)" />
+      <input id="nPriority" type="number" value="100" title="Ưu tiên" />
+      <label style="display:flex;align-items:center;gap:6px;color:var(--muted);">
+        <input id="nAuto" type="checkbox" style="width:18px;height:18px" /> Auto
+      </label>
+      <input id="nBatch" type="number" value="100" title="Batch" />
+      <input id="nTpl" type="number" value="2" title="Template ID" />
+      <input id="nPartner" placeholder="Tên đối tác trên OPS (vd: J&T Express VietNam)" />
+      <button id="btnAdd" class="btn btn-primary">➕ Thêm</button>
+    </div>
+
+    <div style="margin-top: 24px; display: flex; gap: 12px; justify-content: flex-end;">
+      <button id="btnSaveAll" class="btn btn-primary">💾 Lưu tất cả thay đổi</button>
+    </div>
+  </section>
+
+  <section style="padding: 0 20px 40px;">
+    <h3>Test post nhanh lên OPS</h3>
+    <p style="color: var(--muted); font-size: 13px; line-height: 1.6;">
+      Chọn 1 ĐVVC + số lượng đơn cần post. Bỏ tích "Chỉ đơn đã lấy hàng" để post
+      cả những đơn chưa tra trạng thái (chỉ dùng để TEST).
+    </p>
+    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+      <select id="testCarrier" style="min-width:180px;"><option value="">— chọn ĐVVC —</option></select>
+      <input id="testLimit" type="number" value="100" min="1" max="5000" style="width:100px;" placeholder="Số đơn" />
+      <label style="display:flex;align-items:center;gap:6px;color:var(--text);">
+        <input id="testPicked" type="checkbox" checked style="width:18px;height:18px" />
+        Chỉ đơn đã lấy hàng
+      </label>
+      <button id="btnPostNow" class="btn btn-danger">📤 Post ngay lên OPS</button>
+    </div>
+    <div id="testResult" style="margin-top: 14px; color: var(--muted); font-size: 14px;"></div>
+  </section>
+
+  <div id="toasts" class="toasts"></div>
+
+  <script>
+  const $ = (s) => document.querySelector(s);
+  const rowsEl = $("#adminRows");
+
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+  function toast(t, m, k="") {
+    const el = document.createElement("div");
+    el.className = "toast " + k;
+    el.innerHTML = `<div class="t-title">${esc(t)}</div><div class="t-msg">${esc(m||"")}</div>`;
+    $("#toasts").appendChild(el);
+    setTimeout(() => el.remove(), 5000);
+  }
+  async function api(p, o) {
+    const r = await fetch(p, o);
+    if (!r.ok) throw new Error((await r.text()) || r.status);
+    return r.headers.get("content-type")?.includes("json") ? r.json() : r;
+  }
+
+  function rowHtml(r) {
+    return `<tr data-id="${r.id}">
+      <td><input class="c-name" value="${esc(r.name)}" /></td>
+      <td><input class="c-prefix" value="${esc(r.prefix)}" /></td>
+      <td><input class="c-priority" type="number" value="${r.priority}" style="width:70px" /></td>
+      <td><input class="c-auto" type="checkbox" ${r.auto_import_enabled ? "checked" : ""} style="width:18px;height:18px" /></td>
+      <td><input class="c-batch" type="number" value="${r.auto_import_batch || 100}" style="width:80px" /></td>
+      <td><input class="c-tpl" type="number" value="${r.ops_template_id || 2}" style="width:80px" /></td>
+      <td><input class="c-partner" value="${esc(r.ops_partner || "")}" placeholder="vd: J&T Express VietNam" /></td>
+      <td><button class="btn btn-danger btn-post" title="Post 1 batch của ĐVVC này lên OPS ngay">📤 Post</button></td>
+      <td><button class="icon-btn c-del" title="Xoá luật">🗑️</button></td>
+    </tr>`;
+  }
+
+  async function load() {
+    const data = await api("/api/carriers");
+    const items = data.items || [];
+    rowsEl.innerHTML = items.map(rowHtml).join("");
+    // dropdown test
+    const names = [...new Set(items.map((r) => r.name))];
+    $("#testCarrier").innerHTML = '<option value="">— chọn ĐVVC —</option>' +
+      names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
+  }
+
+  function rowPayload(tr) {
+    return {
+      name: tr.querySelector(".c-name").value.trim(),
+      prefix: tr.querySelector(".c-prefix").value.trim(),
+      priority: parseInt(tr.querySelector(".c-priority").value, 10) || 100,
+      auto_import_enabled: tr.querySelector(".c-auto").checked,
+      auto_import_batch: parseInt(tr.querySelector(".c-batch").value, 10) || 100,
+      ops_template_id: parseInt(tr.querySelector(".c-tpl").value, 10) || 2,
+      ops_partner: tr.querySelector(".c-partner").value.trim(),
+    };
+  }
+
+  $("#btnAdd").addEventListener("click", async () => {
+    const p = {
+      name: $("#nName").value.trim(),
+      prefix: $("#nPrefix").value.trim(),
+      priority: parseInt($("#nPriority").value, 10) || 100,
+      auto_import_enabled: $("#nAuto").checked,
+      auto_import_batch: parseInt($("#nBatch").value, 10) || 100,
+      ops_template_id: parseInt($("#nTpl").value, 10) || 2,
+      ops_partner: $("#nPartner").value.trim(),
+    };
+    if (!p.name || !p.prefix) { toast("Thiếu", "Tên và prefix", "warn"); return; }
+    try {
+      await api("/api/carriers", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(p) });
+      $("#nName").value = ""; $("#nPrefix").value = ""; $("#nPartner").value = "";
+      $("#nAuto").checked = false;
+      await load();
+      toast("Đã thêm", `${p.name} (${p.prefix})`, "ok");
+    } catch (e) { toast("Lỗi thêm", String(e), "danger"); }
+  });
+
+  rowsEl.addEventListener("click", async (e) => {
+    const del = e.target.closest(".c-del");
+    if (del) {
+      const tr = del.closest("tr");
+      const name = tr.querySelector(".c-name").value;
+      if (!confirm(`Xoá luật "${name}"?`)) return;
+      try {
+        await api(`/api/carriers/${tr.dataset.id}`, { method: "DELETE" });
+        tr.remove();
+        toast("Đã xoá", name, "warn");
+      } catch (err) { toast("Lỗi xoá", String(err), "danger"); }
+      return;
+    }
+    const post = e.target.closest(".btn-post");
+    if (post) {
+      const tr = post.closest("tr");
+      const p = rowPayload(tr);
+      // Lưu trước khi post (để lấy đúng cấu hình mới nhất)
+      try {
+        await api(`/api/carriers/${tr.dataset.id}`, { method: "PATCH", headers: {"Content-Type": "application/json"}, body: JSON.stringify(p) });
+      } catch (err) { toast("Lỗi lưu trước post", String(err), "danger"); return; }
+      $("#testCarrier").value = p.name;
+      await postNow(p.name);
+    }
+  });
+
+  $("#btnSaveAll").addEventListener("click", async () => {
+    const trs = [...rowsEl.querySelectorAll("tr")];
+    try {
+      for (const tr of trs) {
+        const p = rowPayload(tr);
+        if (!p.name || !p.prefix) continue;
+        await api(`/api/carriers/${tr.dataset.id}`, { method: "PATCH", headers: {"Content-Type": "application/json"}, body: JSON.stringify(p) });
+      }
+      toast("Đã lưu", `${trs.length} luật`, "ok");
+      load();
+    } catch (err) { toast("Lỗi lưu", String(err), "danger"); }
+  });
+
+  async function postNow(carrier) {
+    if (!carrier) { toast("Chọn ĐVVC", "", "warn"); return; }
+    const limit = parseInt($("#testLimit").value, 10) || 100;
+    const requirePicked = $("#testPicked").checked;
+    $("#testResult").textContent = `⏳ Đang post ${carrier} (tối đa ${limit} đơn)... Playwright mở trình duyệt trên server, mất 15-30 giây.`;
+    try {
+      const q = new URLSearchParams({ carrier, limit: String(limit), require_picked: String(requirePicked) });
+      const r = await api("/api/ops/import-now?" + q.toString(), { method: "POST" });
+      if (r.status === "ok") {
+        $("#testResult").innerHTML = `✅ <b>${r.count} đơn</b> đã post lên OPS. Mã phiên: <code>${esc(r.session_id)}</code> (từ OPS: <code>${esc(r.ops_session_id)}</code>)`;
+        toast("Post OPS thành công", `${carrier}: ${r.count} đơn, mã ${r.session_id}`, "ok");
+      } else if (r.status === "empty") {
+        $("#testResult").textContent = "⚠️ " + r.message;
+        toast("Không có đơn", r.message, "warn");
+      } else {
+        $("#testResult").innerHTML = `❌ Lỗi: <code>${esc(r.error)}</code>`;
+        toast("Post OPS lỗi", r.error, "danger");
+      }
+    } catch (err) {
+      $("#testResult").innerHTML = `❌ <code>${esc(String(err))}</code>`;
+      toast("Lỗi", String(err), "danger");
+    }
+  }
+
+  $("#btnPostNow").addEventListener("click", () => postNow($("#testCarrier").value));
+
+  load().catch((e) => toast("Không tải được", String(e), "danger"));
+  </script>
+</body>
+</html>

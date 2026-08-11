@@ -26,10 +26,17 @@ class BulkDeleteIn(BaseModel):
 
 
 class CarrierRuleIn(BaseModel):
-    """Luật nhận diện ĐVVC: tên hãng + prefix (chuỗi đầu mã) + ưu tiên."""
+    """Luật nhận diện ĐVVC: tên hãng + prefix (chuỗi đầu mã) + ưu tiên +
+    cấu hình auto import OPS. 1 hãng có thể có NHIỀU prefix (mỗi prefix 1 hàng),
+    khi đó tất cả hàng cùng `name` nên có cùng giá trị auto import.
+    """
     name: str = Field(..., min_length=1, max_length=64)
     prefix: str = Field(..., min_length=1, max_length=64)
     priority: int = Field(default=100)
+    auto_import_enabled: bool = Field(default=False)
+    auto_import_batch: int = Field(default=100)
+    ops_template_id: int = Field(default=2)
+    ops_partner: str = Field(default="")
 
 
 class ScanOut(BaseModel):
