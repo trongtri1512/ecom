@@ -17,7 +17,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import func, select
+from sqlalchemy import func, select, delete, update
 from sqlalchemy.orm import Session
 
 from . import config, events, export
@@ -489,8 +489,18 @@ def _try_auto_import():
             result = ops_uploader.scan_import(carrier, codes, template_id, partner)
             if result.get("ok"):
                 session_id = result.get("ops_session_id") or stamp
+                failed_codes = result.get("failed_codes", [])
+                successful_codes = [c for c in codes if c not in failed_codes]
+                
+                # Cập nhật session_id cho các mã thành công
                 for r in rows:
-                    r.session_id = session_id
+                    if r.code in successful_codes:
+                        r.session_id = session_id
+                
+                # Xóa hẳn các mã lỗi (trùng) khỏi database
+                if failed_codes:
+                    db.execute(delete(Scan).where(Scan.code.in_(failed_codes)))
+                
                 db.commit()
                 entered = result.get("codes_entered", len(codes))
                 print(f"[auto-import] {carrier} OK session={session_id} ({entered} mã)")
@@ -567,8 +577,18 @@ def ops_import_now(
         entered = result.get("codes_entered", 0)
         if result.get("ok"):
             session_id = result.get("ops_session_id") or stamp
+            failed_codes = result.get("failed_codes", [])
+            successful_codes = [c for c in codes if c not in failed_codes]
+            
+            # Cập nhật session_id cho các mã thành công
             for r in rows:
-                r.session_id = session_id
+                if r.code in successful_codes:
+                    r.session_id = session_id
+                    
+            # Xóa hẳn các mã lỗi (trùng) khỏi database
+            if failed_codes:
+                db.execute(delete(Scan).where(Scan.code.in_(failed_codes)))
+                
             db.commit()
             _log_ops(db, "success", "manual_import", carrier, entered,
                      session_id, f"OK, mã phiên: {session_id}", "")
@@ -638,6 +658,24 @@ def ops_log_clear(db: Session = Depends(get_db)):
     db.commit()
     events.publish("ops_log", {"cleared": True})
     return Response(status_code=204)
+@app.delete("/api/sessions/{session_id}")
+def delete_session(session_id: str, db: Session = Depends(get_db)):
+    """Xóa một phiên OPS khỏi hệ thống (để có thể import lại)."""
+    # Gỡ session_id khỏi các kiện hàng
+    db.execute(
+        update(Scan)
+        .where(Scan.session_id == session_id)
+        .values(session_id=None)
+    )
+    # Xóa log
+    db.execute(
+        delete(OpsLog)
+        .where(OpsLog.session_id == session_id)
+    )
+    db.commit()
+    events.publish("ops_log", {"action": "delete_session", "session_id": session_id})
+    return {"status": "ok", "message": f"Đã xóa phiên {session_id}"}
+
 
 
 @app.get("/api/sessions")

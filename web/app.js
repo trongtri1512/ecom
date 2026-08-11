@@ -67,12 +67,31 @@ async function loadSessions() {
         </td>
         <td>Hệ thống</td>
         <td>${fmtTime(s.created_at)}</td>
+        <td>
+          <button class="icon-btn btn-del-session" data-id="${s.session_id}" title="Xóa phiên này">🗑️</button>
+        </td>
       </tr>
     `).join("");
   } catch (err) {
-    console.error("Lỗi load phiên:", err);
+    empty.hidden = false;
+    empty.textContent = String(err);
   }
 }
+
+// Xử lý nút xóa phiên
+$("#sessionRows").addEventListener("click", async (e) => {
+  const btn = e.target.closest(".btn-del-session");
+  if (!btn) return;
+  const sid = btn.dataset.id;
+  if (!confirm(`Xóa phiên ${sid} khỏi hệ thống? Các đơn hàng sẽ trở về trạng thái chờ đẩy lên OPS.`)) return;
+  try {
+    await api(`/api/sessions/${sid}`, { method: "DELETE" });
+    toast("Đã xóa", `Phiên ${sid} đã được gỡ`, "ok");
+    loadSessions();
+  } catch (err) {
+    toast("Lỗi", String(err), "danger");
+  }
+});
 
 if ($("#btnRefreshSessions")) {
   $("#btnRefreshSessions").addEventListener("click", loadSessions);
