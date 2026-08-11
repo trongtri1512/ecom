@@ -320,8 +320,8 @@ def _extract_session_id(page) -> str:
     ops_session_id = ""
     new_url = page.url
     # Pattern chung cho nhiều hãng: 
-    # SPXCCE..., MVECCE..., JTE..., BEX...
-    pattern = r"([A-Z]{2,6}CCE[A-Z0-9]{4,20}|JTE[A-Z0-9]{6,20}|BEX[A-Z0-9]{6,20})"
+    # SPXCCE..., MVECCE..., MVEC..., JTE..., BEX...
+    pattern = r"(MVEC[A-Z0-9]{4,20}|[A-Z]{2,6}CCE[A-Z0-9]{4,20}|JTE[A-Z0-9]{6,20}|BEX[A-Z0-9]{6,20})"
     
     m = re.search(pattern, new_url)
     if m:
