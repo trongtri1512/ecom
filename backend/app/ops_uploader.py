@@ -48,31 +48,43 @@ def upload_import(carrier: str, excel_path: str, template_id: int, partner_name:
                       wait_until="networkidle")
             page.wait_for_timeout(1500)
 
-            # 3) Bấm nút IMPORT (nút xanh lá góc phải)
+            # 3) Bấm nút IMPORT (nút xanh lá góc phải — Nebular nbButton)
             _click_first(page, [
                 "button:has-text('IMPORT')",
-                "button:has-text('Import')",
+                "[nbButton]:has-text('IMPORT')",
                 "text=/^\\s*IMPORT\\s*$/i",
+                ":text('IMPORT')",
             ])
-            page.wait_for_timeout(800)
-
-            # 4) Chọn file — dialog có nút "Chọn file" mở file picker.
-            #    Playwright dùng expect_file_chooser để chặn dialog hệ điều hành.
-            with page.expect_file_chooser() as fc_info:
-                _click_first(page, [
-                    "button:has-text('Chọn file')",
-                    "text=/Chọn file/i",
-                ])
-            fc = fc_info.value
-            fc.set_files(excel_path)
             page.wait_for_timeout(1500)
+
+            # 4) Upload file — set trực tiếp vào input[type='file'] ẩn.
+            #    Cách này đáng tin cậy hơn click nút "Chọn file" (có thể là <a>,
+            #    <label>, <span> — không phải <button>).
+            file_input = page.locator("input[type='file']").first
+            if file_input.count() > 0:
+                file_input.set_input_files(excel_path)
+            else:
+                # Fallback: click nút "Chọn file" qua file chooser.
+                with page.expect_file_chooser() as fc_info:
+                    _click_first(page, [
+                        ":text('Chọn file')",
+                        "text=/Chọn file/i",
+                        "button:has-text('Chọn file')",
+                        "a:has-text('Chọn file')",
+                        "label:has-text('Chọn file')",
+                    ])
+                fc = fc_info.value
+                fc.set_files(excel_path)
+            page.wait_for_timeout(2000)
 
             # 5) Bấm ĐỒNG Ý
             _click_first(page, [
                 "button:has-text('ĐỒNG Ý')",
+                ":text('ĐỒNG Ý')",
                 "button:has-text('Đồng ý')",
+                ":text('Đồng ý')",
             ])
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(2500)
 
             # 6) Chọn Đối tác vận chuyển (dropdown ở panel bên phải)
             _select_partner(page, partner_name)
@@ -82,6 +94,7 @@ def upload_import(carrier: str, excel_path: str, template_id: int, partner_name:
             url_before = page.url
             _click_first(page, [
                 "button:has-text('TẠO')",
+                ":text('TẠO')",
                 "button:has-text('Tạo')",
             ])
             # Chờ URL đổi (OPS thường redirect sang trang chi tiết phiên vừa tạo)
