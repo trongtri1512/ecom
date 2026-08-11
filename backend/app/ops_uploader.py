@@ -88,7 +88,20 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                         _click_first(page, ["button:has-text('>>')", "button:near(input)"])
                     except Exception:
                         pass
+                
+                # Chờ một chút để web xử lý mã
                 page.wait_for_timeout(random.uniform(400, 800))
+                
+                # Nếu có popup cảnh báo lỗi cho mã này (VD: "Kiện hàng đã tồn tại"), bấm OK để bỏ qua ngay
+                try:
+                    for btn in page.locator("button:has-text('OK'), button:has-text('ĐỒNG Ý'), button:has-text('Đóng')").all():
+                        if btn.is_visible():
+                            print(f"[scan-import] Đóng thông báo lỗi cho mã {code}")
+                            btn.click(force=True)
+                            page.wait_for_timeout(300)
+                except Exception:
+                    pass
+
                 entered += 1
                 if entered % 50 == 0:
                     print(f"[scan-import] {carrier}: đã nhập {entered}/{len(codes)} mã")
@@ -100,7 +113,7 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
             try:
                 # Đóng các toast/modal cảnh báo chung nếu có
                 for _ in range(2):
-                    for btn in page.locator("button:has-text('ĐỒNG Ý'), button:has-text('Đóng')").all():
+                    for btn in page.locator("button:has-text('OK'), button:has-text('ĐỒNG Ý'), button:has-text('Đóng')").all():
                         if btn.is_visible():
                             btn.click(force=True)
                             page.wait_for_timeout(500)
