@@ -347,7 +347,7 @@ def upload_import(carrier: str, excel_path: str, template_id: int, partner_name:
             browser.close()
 
 
-def _extract_session_id(page, retries=3) -> str:
+def _extract_session_id(page, retries=4) -> str:
     """Đọc mã phiên OPS từ URL hoặc nội dung trang sau khi bấm TẠO."""
     import re
     ops_session_id = ""
@@ -366,11 +366,6 @@ def _extract_session_id(page, retries=3) -> str:
             m2 = re.search(r"\b" + pattern + r"\b", body)
             if m2:
                 return m2.group(1)
-            
-            # Thử pattern lỏng hơn nếu có dính ký tự lạ
-            m3 = re.search(pattern, body)
-            if m3:
-                return m3.group(1)
         except Exception:
             pass
             
