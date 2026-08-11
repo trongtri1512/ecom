@@ -77,14 +77,20 @@ def upload_import(carrier: str, excel_path: str, template_id: int, partner_name:
                 fc.set_files(excel_path)
             page.wait_for_timeout(2000)
 
-            # 5) Bấm ĐỒNG Ý
-            _click_first(page, [
-                "button:has-text('ĐỒNG Ý')",
-                ":text('ĐỒNG Ý')",
-                "button:has-text('Đồng ý')",
-                ":text('Đồng ý')",
-            ])
-            page.wait_for_timeout(2500)
+            # 5) Chờ file upload xử lý xong.
+            #    Component ngx-import-file tự upload khi file được set — KHÔNG có
+            #    nút "ĐỒNG Ý" riêng. Chờ cho upload hoàn tất (icon checkmark hoặc
+            #    bảng dữ liệu xuất hiện).
+            try:
+                page.wait_for_selector(
+                    "nb-icon[icon='checkmark-circle-2'], table tbody tr, .upload-state-icon",
+                    timeout=15000,
+                )
+            except Exception:
+                pass  # Có thể không thấy icon → vẫn tiếp tục.
+            page.wait_for_timeout(2000)
+            # Chụp screenshot để debug nếu cần.
+            _save_screenshot(page, "after_upload")
 
             # 6) Chọn Đối tác vận chuyển (dropdown ở panel bên phải)
             _select_partner(page, partner_name)
