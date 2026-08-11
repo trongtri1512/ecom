@@ -491,6 +491,7 @@ def _try_auto_import():
                 session_id = result.get("ops_session_id") or stamp
                 failed_codes = result.get("failed_codes", [])
                 successful_codes = [c for c in codes if c not in failed_codes]
+                entered = len(successful_codes)
                 
                 # Cập nhật session_id cho các mã thành công
                 for r in rows:
@@ -502,7 +503,6 @@ def _try_auto_import():
                     db.execute(delete(Scan).where(Scan.code.in_(failed_codes)))
                 
                 db.commit()
-                entered = result.get("codes_entered", len(codes))
                 print(f"[auto-import] {carrier} OK session={session_id} ({entered} mã)")
                 _log_ops(db, "success", "auto_import", carrier, entered,
                          session_id, f"OK, mã phiên: {session_id}", "")
@@ -579,6 +579,7 @@ def ops_import_now(
             session_id = result.get("ops_session_id") or stamp
             failed_codes = result.get("failed_codes", [])
             successful_codes = [c for c in codes if c not in failed_codes]
+            entered = len(successful_codes)
             
             # Cập nhật session_id cho các mã thành công
             for r in rows:
