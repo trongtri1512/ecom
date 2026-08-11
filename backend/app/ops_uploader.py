@@ -78,21 +78,38 @@ def upload_import(carrier: str, excel_path: str, template_id: int, partner_name:
             page.wait_for_timeout(2000)
 
             # 5) Chờ file upload xử lý xong.
-            #    Component ngx-import-file tự upload khi file được set — KHÔNG có
-            #    nút "ĐỒNG Ý" riêng. Chờ cho upload hoàn tất (icon checkmark hoặc
-            #    bảng dữ liệu xuất hiện).
+            #    Component ngx-import-file tự upload khi file được set.
             try:
                 page.wait_for_selector(
                     "nb-icon[icon='checkmark-circle-2'], table tbody tr, .upload-state-icon",
                     timeout=15000,
                 )
             except Exception:
-                pass  # Có thể không thấy icon → vẫn tiếp tục.
+                pass
             page.wait_for_timeout(2000)
-            # Chụp screenshot để debug nếu cần.
             _save_screenshot(page, "after_upload")
 
-            # 6) Chọn Đối tác vận chuyển (dropdown ở panel bên phải)
+            # 5b) Đóng dialog import (nút × góc phải trên) để lộ form chính.
+            try:
+                close_btn = _find_first(page, [
+                    "button.close",
+                    "nb-card-header button",
+                    ".nb-close",
+                    "button:has-text('×')",
+                    "a.close",
+                ])
+                if close_btn:
+                    close_btn.click()
+                    page.wait_for_timeout(1000)
+                else:
+                    # Fallback: bấm ESC để đóng dialog.
+                    page.keyboard.press("Escape")
+                    page.wait_for_timeout(1000)
+            except Exception:
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(1000)
+
+            # 6) Chọn Đối tác vận chuyển (dropdown Nebular nb-select)
             _select_partner(page, partner_name)
             page.wait_for_timeout(500)
 
@@ -238,23 +255,84 @@ def _click_first(page, selectors):
 
 
 def _select_partner(page, partner_name: str):
-    """Mở dropdown 'Đối tác vận chuyển' và chọn option chứa partner_name."""
-    # Dropdown thường là 1 element .ant-select hoặc select. Thử cả 2.
+    """Mở dropdown 'Đối tác vận chuyển' và chọn option chứa partner_name.
+
+    OPS dùng Nebular UI → dropdown là nb-select (custom component, KHÔNG phải
+    native <select>). Mở bằng cách click trigger, rồi chọn option trong overlay.
+    """
+    _save_screenshot(page, "before_partner")
+
+    # 1) Tìm nb-select chứa label "Đối tác vận chuyển" hoặc nằm gần nó.
+    #    Thử nhiều cách tìm trigger.
+    selectors_trigger = [
+        # Nebular: nb-select hiển thị placeholder hoặc giá trị hiện tại.
+        "nb-select",
+        ".select-button",
+        # Tìm theo label gần: div chứa text + nb-select bên trong.
+        "nb-select:near(:text('vận chuyển'), 300)",
+    ]
+    clicked = False
+    for sel in selectors_trigger:
+        try:
+            loc = page.locator(sel).first
+            if loc.count() > 0 and loc.is_visible():
+                loc.click(timeout=5000)
+                page.wait_for_timeout(600)
+                clicked = True
+                break
+        except Exception:
+            continue
+
+    if not clicked:
+        # Fallback: click phần tử có text gợi ý dropdown.
+        try:
+            _click_first(page, [
+                ":text('Chọn đối tác')",
+                ":text('đối tác vận chuyển')",
+                "[placeholder*='đối tác']",
+            ])
+            page.wait_for_timeout(600)
+            clicked = True
+        except Exception:
+            pass
+
+    if not clicked:
+        _save_screenshot(page, "partner_not_found")
+        raise RuntimeError(f"Không tìm thấy dropdown 'Đối tác vận chuyển'")
+
+    _save_screenshot(page, "partner_dropdown_open")
+
+    # 2) Chọn option trong overlay.
+    option_selectors = [
+        f"nb-option:has-text('{partner_name}')",
+        f".option-list nb-option:has-text('{partner_name}')",
+        f"nb-option:text-is('{partner_name}')",
+        f":text('{partner_name}')",
+    ]
+    for sel in option_selectors:
+        try:
+            opt = page.locator(sel).first
+            if opt.count() > 0:
+                opt.click(timeout=5000)
+                return
+        except Exception:
+            continue
+
+    # 3) Nếu không match chính xác, tìm option chứa từ khoá.
+    #    VD partner_name = "J&T Express" → tìm option có chứa "J&T" hoặc "JT".
+    keyword = partner_name.split()[0].replace("&", "")  # "J&T" → "JT"
     try:
-        # Ant Design pattern
-        trigger = page.locator("text=Đối tác vận chuyển").locator(
-            "xpath=ancestor::*[contains(@class,'ant-form-item') or self::div][1]"
-        ).locator(".ant-select-selector").first
-        if trigger.count() > 0:
-            trigger.click()
-            page.wait_for_timeout(400)
-            page.locator(f".ant-select-item:has-text('{partner_name}')").first.click()
-            return
+        opts = page.locator("nb-option").all()
+        for opt in opts:
+            text = opt.inner_text().strip()
+            if keyword.lower() in text.lower().replace("&", "") or partner_name.lower() in text.lower():
+                opt.click(timeout=3000)
+                return
     except Exception:
         pass
-    # Fallback: native select
-    try:
-        sel = page.locator("select").first
-        sel.select_option(label=partner_name)
-    except Exception as e:
-        raise RuntimeError(f"Không chọn được đối tác '{partner_name}': {e}")
+
+    _save_screenshot(page, "partner_option_not_found")
+    raise RuntimeError(
+        f"Không chọn được đối tác '{partner_name}'. "
+        f"Kiểm tra screenshot trong ops_logs/ để xem dropdown."
+    )
