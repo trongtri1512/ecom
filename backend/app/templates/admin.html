@@ -79,6 +79,22 @@
     <div id="testResult" style="margin-top: 14px; color: var(--muted); font-size: 14px;"></div>
   </section>
 
+  <section style="padding: 0 20px 40px;">
+    <h3>Đồng bộ ngược mã bàn giao (Thủ công)</h3>
+    <p style="color: var(--muted); font-size: 13px; line-height: 1.6;">
+      Nếu có các kiện hàng đã được bàn giao thành công trên OPS nhưng hệ thống Local chưa cập nhật, bạn có thể dán mã phiên và danh sách các mã vận đơn vào đây để cập nhật ngược lại vào Database. Điều này giúp hệ thống biết mã đã xong và không gửi lại nữa.
+    </p>
+    <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-start;">
+      <div style="flex: 1; min-width: 250px; max-width: 300px;">
+        <input id="syncSessionId" type="text" placeholder="Nhập mã phiên (VD: SPXCCEM2QPM6)" style="width: 100%; margin-bottom: 10px;" />
+        <button id="btnSyncManual" class="btn btn-primary" style="width: 100%;">🔄 Đồng bộ ngược vào DB</button>
+      </div>
+      <div style="flex: 2; min-width: 300px;">
+        <textarea id="syncCodes" placeholder="Dán danh sách mã vận đơn vào đây (mỗi mã 1 dòng hoặc cách nhau bằng dấu phẩy)..." style="width: 100%; height: 100px; resize: vertical; font-family: Consolas, monospace; font-size: 12px; padding: 10px; background: #0f172a; color: #e2e8f0; border: 1px solid var(--line); border-radius: 4px;"></textarea>
+      </div>
+    </div>
+  </section>
+
   <section style="padding: 20px;">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
       <h3 style="margin:0;">Log OPS (mới nhất trước)</h3>
@@ -262,6 +278,51 @@
   }
 
   $("#btnPostNow").addEventListener("click", () => postNow($("#testCarrier").value));
+
+  /* ------------------------- Đồng bộ ngược thủ công ------------------------- */
+  $("#btnSyncManual").addEventListener("click", async () => {
+    const sessionId = $("#syncSessionId").value.trim();
+    const rawCodes = $("#syncCodes").value;
+    if (!sessionId) {
+      toast("Thiếu thông tin", "Vui lòng nhập Mã phiên bàn giao", "warn");
+      return;
+    }
+    
+    // Tách mã bằng dấu xuống dòng hoặc dấu phẩy
+    const codes = rawCodes.split(/[\n,]+/).map(c => c.trim()).filter(c => c);
+    if (codes.length === 0) {
+      toast("Thiếu thông tin", "Vui lòng dán danh sách mã vận đơn", "warn");
+      return;
+    }
+
+    if (!confirm(`Bạn sắp cập nhật ${codes.length} mã vận đơn vào phiên "${sessionId}". Tiếp tục?`)) return;
+
+    const btn = $("#btnSyncManual");
+    const oldText = btn.innerHTML;
+    btn.innerHTML = "⏳ Đang xử lý...";
+    btn.disabled = true;
+
+    try {
+      const res = await api("/api/ops/sync-manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, codes })
+      });
+      if (res.status === "ok") {
+        toast("Thành công", `Đã cập nhật ${res.updated}/${res.total_submitted} mã có trong DB.`, "ok");
+        $("#syncSessionId").value = "";
+        $("#syncCodes").value = "";
+        loadLogs();
+      } else {
+        toast("Lỗi", res.message, "danger");
+      }
+    } catch (e) {
+      toast("Lỗi", String(e), "danger");
+    } finally {
+      btn.innerHTML = oldText;
+      btn.disabled = false;
+    }
+  });
 
   /* ------------------------- Log OPS ------------------------- */
   const LEVEL_COLOR = {

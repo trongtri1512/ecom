@@ -620,6 +620,35 @@ def ops_import_now(
     finally:
         db.close()
 
+# ----------------------------- Đồng bộ ngược thủ công -----------------------------
+@app.post("/api/ops/sync-manual")
+def api_ops_sync_manual(req: dict, db: Session = Depends(get_db)):
+    session_id = req.get("session_id", "").strip()
+    codes = req.get("codes", [])
+    if not session_id or not codes:
+        return {"status": "error", "message": "Thiếu mã phiên hoặc danh sách mã vận đơn"}
+    
+    # Chuẩn hóa mã vận đơn (loại bỏ khoảng trắng)
+    codes = [c.strip() for c in codes if c.strip()]
+    if not codes:
+        return {"status": "error", "message": "Danh sách mã vận đơn rỗng"}
+
+    # Tìm các mã trong database (chưa có session_id)
+    rows = db.scalars(select(Scan).where(Scan.code.in_(codes), Scan.session_id == "")).all()
+    updated_count = len(rows)
+    
+    for r in rows:
+        r.session_id = session_id
+        
+    db.commit()
+    
+    if updated_count > 0:
+        _log_ops(db, "success", "manual_sync", "Manual Sync", updated_count, session_id, 
+                 f"Đồng bộ ngược thủ công {updated_count}/{len(codes)} mã vào phiên {session_id}", "")
+        events.publish("auto_import", {"carrier": "Manual Sync", "count": updated_count, "session_id": session_id})
+        
+    return {"status": "ok", "updated": updated_count, "total_submitted": len(codes)}
+
 
 # ----------------------------- OPS logs API -----------------------------
 @app.get("/api/ops/logs")
