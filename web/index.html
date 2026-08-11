@@ -16,8 +16,15 @@
     </div>
   </header>
 
-  <!-- Thẻ KPI: Total + theo ĐVVC -->
-  <section id="kpis" class="kpis"></section>
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="tab-scans">Danh sách mã</button>
+    <button class="tab-btn" data-tab="tab-sessions">Phiên bàn giao</button>
+  </div>
+
+  <div id="tab-scans" class="tab-content active">
+    <!-- Thẻ KPI: Total + theo ĐVVC -->
+    <section id="kpis" class="kpis"></section>
 
   <!-- Thanh công cụ -->
   <section class="toolbar">
@@ -68,6 +75,34 @@
     </table>
     <div id="empty" class="empty" hidden>Chưa có mã nào. Quét thử một mã đi!</div>
   </section>
+  </div> <!-- end tab-scans -->
+
+  <div id="tab-sessions" class="tab-content" hidden>
+    <section class="toolbar">
+      <h2>Lịch sử phiên bàn giao</h2>
+      <span class="spacer"></span>
+      <button id="btnRefreshSessions" class="btn btn-ghost">↻ Làm mới</button>
+    </section>
+    <section class="tablewrap">
+      <table id="tblSessions">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Nhà vận chuyển</th>
+            <th>Mã phiên bàn giao</th>
+            <th>Loại phiên</th>
+            <th>Số kiện hàng</th>
+            <th>SL đơn xuất</th>
+            <th>Trạng thái</th>
+            <th>Người tạo</th>
+            <th>Ngày tạo</th>
+          </tr>
+        </thead>
+        <tbody id="sessionRows"></tbody>
+      </table>
+      <div id="emptySessions" class="empty" hidden>Chưa có phiên bàn giao nào.</div>
+    </section>
+  </div> <!-- end tab-sessions -->
 
   <div id="toasts" class="toasts"></div>
 

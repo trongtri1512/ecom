@@ -22,6 +22,62 @@ function fmtTime(iso) {
   return d.toLocaleString("vi-VN", { hour12: false });
 }
 
+/* Tabs */
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".tab-content").forEach(c => c.classList.remove("active"));
+    btn.classList.add("active");
+    const target = document.getElementById(btn.dataset.tab);
+    if (target) target.classList.add("active");
+    if (btn.dataset.tab === "tab-sessions") {
+      loadSessions();
+    }
+  });
+});
+
+/* Load OPS Sessions */
+async function loadSessions() {
+  const tbody = $("#sessionRows");
+  const empty = $("#emptySessions");
+  try {
+    const res = await api("/api/ops/logs?limit=50");
+    const items = res.items || [];
+    // Chỉ lấy các log tạo phiên (auto_import hoặc manual_import)
+    const sessions = items.filter(i => i.action.includes("import") && i.session_id);
+    
+    if (!sessions.length) {
+      empty.hidden = false;
+      tbody.innerHTML = "";
+      return;
+    }
+    empty.hidden = true;
+    tbody.innerHTML = sessions.map((s, idx) => `
+      <tr>
+        <td>${idx + 1}</td>
+        <td>${s.carrier}</td>
+        <td style="color:var(--primary);font-weight:600;">${s.session_id}</td>
+        <td>Phiên giao</td>
+        <td>${s.count}</td>
+        <td>${s.count}</td>
+        <td>
+          <span style="background:${s.level === 'success' ? '#22c55e' : '#ef4444'};color:#fff;padding:2px 8px;border-radius:12px;font-size:11px;">
+            ${s.level === 'success' ? 'Thành công' : 'Lỗi'}
+          </span>
+        </td>
+        <td>Hệ thống</td>
+        <td>${fmtTime(s.created_at)}</td>
+      </tr>
+    `).join("");
+  } catch (err) {
+    console.error("Lỗi load phiên:", err);
+  }
+}
+
+if ($("#btnRefreshSessions")) {
+  $("#btnRefreshSessions").addEventListener("click", loadSessions);
+}
+
 function toast(title, msg, kind = "") {
   const el = document.createElement("div");
   el.className = "toast " + kind;

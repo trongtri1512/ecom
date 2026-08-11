@@ -240,11 +240,12 @@ class Sender:
         return None
 
     def get_sessions_today(self):
-        """Danh sách mã phiên đã import hôm nay, nhóm theo ĐVVC. None nếu lỗi."""
+        """Danh sách mã phiên đã import từ ops_logs. None nếu lỗi."""
         try:
-            r = self.session.get(self.cfg["url"] + "/api/sessions?period=day", timeout=8)
+            r = self.session.get(self.cfg["url"] + "/api/ops/logs?limit=30", timeout=8)
             if r.status_code == 200:
-                return r.json().get("by_carrier", {})
+                items = r.json().get("items", [])
+                return [i for i in items if "import" in i.get("action", "") and i.get("session_id")]
         except requests.RequestException:
             pass
         return None
@@ -487,17 +488,48 @@ class AgentWindow:
         self.kpi_grid.pack(fill="x")
         self.kpi_grid.columnconfigure(0, weight=1)
         self.kpi_grid.columnconfigure(1, weight=1)
-
         # ---- Khối "Mã phiên hôm nay" ----
         tk.Label(right, text="MÃ PHIÊN OPS HÔM NAY", fg="#94a3b8", bg=self.BG,
                  font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(14, 4))
         self.sessions_box = tk.Frame(right, bg=self.PANEL)
         self.sessions_box.pack(fill="x")
-        self.sessions_empty = tk.Label(self.sessions_box,
-                                       text="  (chưa có phiên nào import lên OPS)",
-                                       fg="#64748b", bg=self.PANEL,
-                                       font=("Segoe UI", 9, "italic"))
-        self.sessions_empty.pack(anchor="w", padx=12, pady=8)
+        
+        # Style cho Treeview (Dark theme)
+        style = ttk.Style()
+        style.theme_use("default")
+        style.configure("Treeview", background="#1e293b", foreground="#e2e8f0", fieldbackground="#1e293b",
+                        rowheight=24, borderwidth=0, font=("Segoe UI", 9))
+        style.configure("Treeview.Heading", background="#334155", foreground="#e2e8f0", 
+                        font=("Segoe UI", 9, "bold"), borderwidth=0)
+        style.map("Treeview", background=[("selected", "#3b82f6")])
+
+        cols = ("stt", "carrier", "session_id", "type", "qty", "qty_out", "status", "creator", "date")
+        self.tree_sessions = ttk.Treeview(self.sessions_box, columns=cols, show="headings", height=5)
+        self.tree_sessions.pack(side="left", fill="x", expand=True)
+        
+        self.tree_sessions.heading("stt", text="#")
+        self.tree_sessions.heading("carrier", text="Nhà vận chuyển")
+        self.tree_sessions.heading("session_id", text="Mã phiên bàn giao")
+        self.tree_sessions.heading("type", text="Loại phiên")
+        self.tree_sessions.heading("qty", text="Số kiện hàng")
+        self.tree_sessions.heading("qty_out", text="SL đơn xuất")
+        self.tree_sessions.heading("status", text="Trạng thái")
+        self.tree_sessions.heading("creator", text="Người tạo")
+        self.tree_sessions.heading("date", text="Ngày tạo")
+
+        self.tree_sessions.column("stt", width=30, anchor="center")
+        self.tree_sessions.column("carrier", width=110, anchor="w")
+        self.tree_sessions.column("session_id", width=140, anchor="w")
+        self.tree_sessions.column("type", width=80, anchor="center")
+        self.tree_sessions.column("qty", width=80, anchor="center")
+        self.tree_sessions.column("qty_out", width=80, anchor="center")
+        self.tree_sessions.column("status", width=80, anchor="center")
+        self.tree_sessions.column("creator", width=80, anchor="center")
+        self.tree_sessions.column("date", width=120, anchor="center")
+        
+        sb_sessions = tk.Scrollbar(self.sessions_box, command=self.tree_sessions.yview)
+        sb_sessions.pack(side="right", fill="y")
+        self.tree_sessions.config(yscrollcommand=sb_sessions.set)
 
         # ---- Khối "Các sọt hôm nay" + nút Hoàn thành sọt ----
         basket_head = tk.Frame(right, bg=self.BG)
@@ -641,37 +673,38 @@ class AgentWindow:
         return img
 
     def _render_sessions(self):
-        """Vẽ khối 'Mã phiên OPS hôm nay' — mỗi ĐVVC 1 khối."""
+        """Vẽ khối 'Mã phiên OPS hôm nay' — mỗi phiên 1 dòng trong Treeview."""
         with self._summary_lock:
-            data = dict(self._sessions or {})
-        # Xoá các widget cũ (rebuild toàn bộ cho đơn giản, khối nhỏ nên ok)
-        for w in self.sessions_box.winfo_children():
-            w.destroy()
+            data = list(self._sessions or [])
+        
+        # Xóa dữ liệu cũ
+        for row in self.tree_sessions.get_children():
+            self.tree_sessions.delete(row)
+        
         if not data:
-            self.sessions_empty = tk.Label(self.sessions_box,
-                                           text="  (chưa có phiên nào import lên OPS)",
-                                           fg="#64748b", bg=self.PANEL,
-                                           font=("Segoe UI", 9, "italic"))
-            self.sessions_empty.pack(anchor="w", padx=12, pady=8)
             return
+
         # Phát hiện phiên MỚI so với lần render trước -> hiện thông báo (bíp)
         current_ids = set()
-        for arr in data.values():
-            for s in arr:
-                current_ids.add(s["session_id"])
+        for idx, s in enumerate(data):
+            session_id = s.get("session_id", "")
+            current_ids.add(session_id)
+            
+            stt = idx + 1
+            carrier = s.get("carrier", "")
+            type_str = "Phiên giao"
+            qty = s.get("count", 0)
+            status = "Thành công" if s.get("level") == "success" else "Lỗi"
+            creator = "Hệ thống"
+            date_str = (s.get("created_at") or "")[:19].replace("T", " ")
+
+            self.tree_sessions.insert("", "end", values=(
+                stt, carrier, session_id, type_str, qty, qty, status, creator, date_str
+            ))
+
         new_ids = current_ids - self._last_session_ids
         self._last_session_ids = current_ids
-        # Vẽ theo từng ĐVVC
-        for carrier in sorted(data.keys()):
-            row = tk.Frame(self.sessions_box, bg=self.PANEL)
-            row.pack(fill="x", padx=10, pady=4)
-            tk.Label(row, text=carrier, fg="#94a3b8", bg=self.PANEL,
-                     font=("Segoe UI", 9, "bold"), width=10, anchor="w").pack(side="left")
-            # Các mã phiên (bấm chuột phải để copy? — đơn giản là hiện text chọn được)
-            text = "   ".join(f"{s['session_id']} ({s['count']})" for s in data[carrier])
-            tk.Label(row, text=text, fg="#e2e8f0", bg=self.PANEL,
-                     font=("Consolas", 10), anchor="w", justify="left",
-                     wraplength=520).pack(side="left", fill="x", expand=True)
+
         # Thông báo phiên mới (nếu có, và không phải lần render đầu tiên)
         if new_ids and self._last_session_ids != new_ids:
             for sid in new_ids:

@@ -35,6 +35,20 @@ body {
 .dot-on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
 .dot-off { background: var(--danger); }
 
+/* Tabs */
+.tabs {
+  display: flex; gap: 8px; padding: 0 20px; margin-top: 16px; border-bottom: 1px solid var(--line);
+}
+.tab-btn {
+  background: transparent; border: none; color: var(--muted); font-size: 15px;
+  padding: 10px 16px; cursor: pointer; border-bottom: 2px solid transparent;
+  font-weight: 500;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
 /* KPI cards */
 .kpis {
   display: grid; gap: 12px; padding: 20px;
