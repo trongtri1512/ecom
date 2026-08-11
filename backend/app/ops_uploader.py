@@ -95,6 +95,36 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
 
             print(f"[scan-import] {carrier}: nhập xong {entered} mã, chờ xử lý...")
             page.wait_for_timeout(2000)
+
+            # 5.5) Tự động xóa các kiện trùng / lỗi trên bảng để nút TẠO được hiển thị
+            try:
+                # Đóng các toast/modal cảnh báo chung nếu có
+                for _ in range(2):
+                    for btn in page.locator("button:has-text('ĐỒNG Ý'), button:has-text('Đóng')").all():
+                        if btn.is_visible():
+                            btn.click(force=True)
+                            page.wait_for_timeout(500)
+                
+                # Tìm các dòng báo lỗi và xóa
+                rows = page.locator("tbody tr").all()
+                for row in rows:
+                    if not row.is_visible(): continue
+                    txt = row.inner_text().lower()
+                    # Nhận diện lỗi: trùng, tồn tại, đã lấy hàng, thành công (đã bàn giao)...
+                    if "trùng" in txt or "tồn tại" in txt or "đã lấy hàng" in txt or "thành công" in txt or "lỗi" in txt:
+                        del_btn = row.locator("[icon='trash'], .nb-trash, i.fa-trash, button:has-text('Xóa'), button[title='Xóa']").first
+                        if del_btn.is_visible():
+                            print("[scan-import] Xóa 1 mã bị trùng/lỗi khỏi danh sách.")
+                            del_btn.click(force=True)
+                            page.wait_for_timeout(500)
+                            # Đóng popup xác nhận xóa (nếu hệ thống có hỏi "Bạn có chắc...")
+                            for confirm_btn in page.locator("button:has-text('ĐỒNG Ý'), button:has-text('Xác nhận'), button:has-text('Xoá')").all():
+                                if confirm_btn.is_visible():
+                                    confirm_btn.click(force=True)
+                                    page.wait_for_timeout(500)
+            except Exception as e:
+                print("[scan-import] Bỏ qua lỗi khi cố gắng xóa kiện trùng:", e)
+
             _save_screenshot(page, "after_scan_input")
 
             # 6) Bấm TẠO
