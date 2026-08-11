@@ -7,9 +7,9 @@ venv/
 
 # Secrets & local state
 .env
-agent/config.ini
 agent/queue.db
 *.db
+# NOTE: agent/config.ini KHÔNG ignore vì repo private, muốn commit sẵn để deploy nhanh.
 
 # Build output
 dist/

@@ -928,15 +928,32 @@ def health():
     return {"status": "ok"}
 
 
-# ----------------------------- Phục vụ web app tĩnh -----------------------------
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+import secrets
 
+security = HTTPBasic()
 
-@app.get("/admin")
-def _admin_redirect():
-    """URL đẹp /admin -> file admin.html tĩnh."""
-    return RedirectResponse(url="/admin.html")
+def check_admin(credentials: HTTPBasicCredentials = Depends(security)):
+    correct_username = secrets.compare_digest(credentials.username, "admin")
+    correct_password = secrets.compare_digest(credentials.password, "123456")
+    if not (correct_username and correct_password):
+        raise HTTPException(
+            status_code=401,
+            detail="Sai thông tin đăng nhập",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
 
+@app.get("/admin", response_class=HTMLResponse)
+def serve_admin(username: str = Depends(check_admin)):
+    """Phục vụ file admin có bảo vệ mật khẩu."""
+    # Read the admin.html file from backend/app/templates
+    admin_file = os.path.join(os.path.dirname(__file__), "templates", "admin.html")
+    if os.path.exists(admin_file):
+        with open(admin_file, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse(content="Admin template not found", status_code=404)
 
 # Nếu thư mục web được mount vào (Docker), backend phục vụ luôn UI ở "/".
 _WEB_DIR = os.getenv("WEB_DIR", "/app/web")
