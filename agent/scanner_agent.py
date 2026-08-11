@@ -439,6 +439,7 @@ class AgentWindow:
         self.q = event_queue
         self.count_session = 0
         self._summary = None          # summary sọt hiện tại (dict) từ server
+        self._summary_today = None    # summary toàn bộ hôm nay
         self._summary_lock = threading.Lock()
         self._kpi_widgets = {}        # tên ĐVVC -> label giá trị
         self._logo_imgs = {}          # tên ĐVVC -> ImageTk (cache logo)
@@ -495,27 +496,54 @@ class AgentWindow:
                  fg="#94a3b8", bg=self.BG, font=("Segoe UI", 9, "bold"))
         self.lbl_kpi_title.pack(side="left", pady=(0, 4))
 
-        # Thẻ Tổng (nổi bật)
+        # Thẻ Tổng (nổi bật, 2 cột)
         total_card = tk.Frame(right, bg="#2563eb")
         total_card.pack(fill="x", pady=(2, 10))
-        self.lbl_total_title = tk.Label(total_card, text="TỔNG ĐƠN (SỌT 1)", fg="#dbeafe", bg="#2563eb",
+        
+        col1 = tk.Frame(total_card, bg="#2563eb")
+        col1.pack(side="left", fill="both", expand=True, padx=14, pady=10)
+        self.lbl_total_title = tk.Label(col1, text="TỔNG ĐƠN (SỌT 1)", fg="#dbeafe", bg="#2563eb",
                  font=("Segoe UI", 10))
-        self.lbl_total_title.pack(anchor="w", padx=14, pady=(10, 0))
-        self.total_lbl = tk.Label(total_card, text="0", fg="white", bg="#2563eb",
+        self.lbl_total_title.pack(anchor="w")
+        self.total_lbl = tk.Label(col1, text="0", fg="white", bg="#2563eb",
                                   font=("Segoe UI", 30, "bold"))
-        self.total_lbl.pack(anchor="w", padx=14, pady=(0, 10))
+        self.total_lbl.pack(anchor="w")
+
+        col2 = tk.Frame(total_card, bg="#1d4ed8")
+        col2.pack(side="right", fill="both", expand=True, padx=14, pady=10)
+        tk.Label(col2, text="TỔNG HÔM NAY (TOÀN HỆ THỐNG)", fg="#dbeafe", bg="#1d4ed8",
+                 font=("Segoe UI", 10)).pack(anchor="w")
+        self.total_today_lbl = tk.Label(col2, text="0", fg="white", bg="#1d4ed8",
+                                  font=("Segoe UI", 30, "bold"))
+        self.total_today_lbl.pack(anchor="w")
 
         # Lưới thẻ theo ĐVVC (2 cột)
         self.kpi_grid = tk.Frame(right, bg=self.BG)
         self.kpi_grid.pack(fill="x")
         self.kpi_grid.columnconfigure(0, weight=1)
         self.kpi_grid.columnconfigure(1, weight=1)
-        # ---- Khối "Mã phiên hôm nay" ----
-        tk.Label(right, text="MÃ PHIÊN OPS HÔM NAY", fg="#94a3b8", bg=self.BG,
-                 font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(14, 4))
-        self.sessions_box = tk.Frame(right, bg=self.PANEL)
-        self.sessions_box.pack(fill="x")
+        # ---- Layout Notebook (Tabs) ----
+        nb_frame = tk.Frame(right, bg=self.BG)
+        nb_frame.pack(fill="both", expand=True, pady=(14, 0))
         
+        # Tiêu đề + Nút Hoàn Thành Sọt
+        tab_header = tk.Frame(nb_frame, bg=self.BG)
+        tab_header.pack(fill="x", pady=(0, 6))
+        tk.Button(tab_header, text="✅ Hoàn thành sọt", command=self._close_basket,
+                  bg="#16a34a", fg="white", relief="flat",
+                  font=("Segoe UI", 10, "bold"), padx=12, pady=4).pack(side="right")
+                  
+        self.notebook = ttk.Notebook(nb_frame)
+        self.notebook.pack(fill="both", expand=True)
+
+        # Tab 1: Sọt
+        self.baskets_tab = tk.Frame(self.notebook, bg=self.PANEL)
+        self.notebook.add(self.baskets_tab, text="Các sọt hôm nay (Máy này)")
+        
+        # Tab 2: Sessions
+        self.sessions_tab = tk.Frame(self.notebook, bg=self.PANEL)
+        self.notebook.add(self.sessions_tab, text="Mã phiên OPS hôm nay")
+
         # Style cho Treeview (Dark theme)
         style = ttk.Style()
         style.theme_use("default")
@@ -525,20 +553,14 @@ class AgentWindow:
                         font=("Segoe UI", 9, "bold"), borderwidth=0)
         style.map("Treeview", background=[("selected", "#3b82f6")])
 
+        # --- Treeview Sessions ---
         cols = ("stt", "carrier", "session_id", "type", "qty", "qty_out", "status", "creator", "date")
-        self.tree_sessions = ttk.Treeview(self.sessions_box, columns=cols, show="headings", height=5)
-        self.tree_sessions.pack(side="left", fill="x", expand=True)
+        self.tree_sessions = ttk.Treeview(self.sessions_tab, columns=cols, show="headings")
+        self.tree_sessions.pack(side="left", fill="both", expand=True)
         
-        self.tree_sessions.heading("stt", text="#")
-        self.tree_sessions.heading("carrier", text="Nhà vận chuyển")
-        self.tree_sessions.heading("session_id", text="Mã phiên bàn giao")
-        self.tree_sessions.heading("type", text="Loại phiên")
-        self.tree_sessions.heading("qty", text="Số kiện hàng")
-        self.tree_sessions.heading("qty_out", text="SL đơn xuất")
-        self.tree_sessions.heading("status", text="Trạng thái")
-        self.tree_sessions.heading("creator", text="Người tạo")
-        self.tree_sessions.heading("date", text="Ngày tạo")
-
+        for c, name in zip(cols, ["#", "Nhà vận chuyển", "Mã phiên bàn giao", "Loại phiên", "Số kiện hàng", "SL đơn xuất", "Trạng thái", "Người tạo", "Ngày tạo"]):
+            self.tree_sessions.heading(c, text=name)
+        
         self.tree_sessions.column("stt", width=30, anchor="center")
         self.tree_sessions.column("carrier", width=110, anchor="w")
         self.tree_sessions.column("session_id", width=140, anchor="w")
@@ -549,25 +571,15 @@ class AgentWindow:
         self.tree_sessions.column("creator", width=80, anchor="center")
         self.tree_sessions.column("date", width=120, anchor="center")
         
-        sb_sessions = tk.Scrollbar(self.sessions_box, command=self.tree_sessions.yview)
+        sb_sessions = tk.Scrollbar(self.sessions_tab, command=self.tree_sessions.yview)
         sb_sessions.pack(side="right", fill="y")
         self.tree_sessions.config(yscrollcommand=sb_sessions.set)
 
-        # ---- Khối "Các sọt hôm nay" + nút Hoàn thành sọt ----
-        basket_head = tk.Frame(right, bg=self.BG)
-        basket_head.pack(fill="x", pady=(14, 4))
-        tk.Label(basket_head, text="CÁC SỌT HÔM NAY (MÁY NÀY)",
-                 fg="#94a3b8", bg=self.BG, font=("Segoe UI", 9, "bold")).pack(side="left")
-        tk.Button(basket_head, text="✅ Hoàn thành sọt", command=self._close_basket,
-                  bg="#16a34a", fg="white", relief="flat",
-                  font=("Segoe UI", 10, "bold"), padx=12, pady=4).pack(side="right")
-        self.baskets_box = tk.Frame(right, bg=self.PANEL)
-        self.baskets_box.pack(fill="both", expand=True)
-        self.baskets_empty = tk.Label(self.baskets_box,
+        # --- Label / Treeview Baskets ---
+        self.baskets_empty = tk.Label(self.baskets_tab,
                                       text="  (chưa có sọt nào — bấm 'Hoàn thành sọt' để chốt sọt đầu tiên)",
-                                      fg="#64748b", bg=self.PANEL,
-                                      font=("Segoe UI", 9, "italic"))
-        self.baskets_empty.pack(anchor="w", padx=12, pady=8)
+                                      fg="#64748b", bg=self.PANEL, font=("Segoe UI", 9, "italic"))
+        self.baskets_empty.pack(anchor="w", padx=12, pady=12)
 
         # ---- Nút điều khiển ----
         btns = tk.Frame(self.root, bg=self.BG)
@@ -616,6 +628,11 @@ class AgentWindow:
         threading.Thread(target=loop, daemon=True).start()
 
     def _pull_all(self):
+        s_today = self.state["sender"].get_summary_today()
+        if s_today is not None:
+            with self._summary_lock:
+                self._summary_today = s_today
+
         s = self.state["sender"].get_current_basket()
         if s is not None:
             with self._summary_lock:
@@ -636,6 +653,11 @@ class AgentWindow:
     def _render_summary(self):
         with self._summary_lock:
             s = self._summary
+            s_today = self._summary_today
+
+        if s_today:
+            self.total_today_lbl.config(text=str(s_today.get("total", 0)))
+
         if not s:
             return
         
@@ -801,28 +823,52 @@ class AgentWindow:
     def _render_baskets(self):
         with self._summary_lock:
             data = list(self._baskets or [])
-        for w in self.baskets_box.winfo_children():
-            w.destroy()
+        
+        if not hasattr(self, 'tree_baskets'):
+            cols = ("seq", "total", "details", "time")
+            self.tree_baskets = ttk.Treeview(self.baskets_tab, columns=cols, show="headings")
+            self.tree_baskets.pack(side="left", fill="both", expand=True)
+            
+            for c, name in zip(cols, ["Sọt", "Tổng số", "Chi tiết theo ĐVVC", "Thời gian chốt"]):
+                self.tree_baskets.heading(c, text=name)
+            
+            self.tree_baskets.column("seq", width=60, anchor="center")
+            self.tree_baskets.column("total", width=80, anchor="center")
+            self.tree_baskets.column("details", width=400, anchor="w")
+            self.tree_baskets.column("time", width=120, anchor="center")
+            
+            sb = tk.Scrollbar(self.baskets_tab, command=self.tree_baskets.yview)
+            sb.pack(side="right", fill="y")
+            self.tree_baskets.config(yscrollcommand=sb.set)
+
+        # Xóa dữ liệu cũ
+        for row in self.tree_baskets.get_children():
+            self.tree_baskets.delete(row)
+
         if not data:
-            self.baskets_empty = tk.Label(self.baskets_box,
-                text="  (chưa có sọt nào — bấm 'Hoàn thành sọt' để chốt sọt đầu tiên)",
-                fg="#64748b", bg=self.PANEL, font=("Segoe UI", 9, "italic"))
-            self.baskets_empty.pack(anchor="w", padx=12, pady=8)
+            if not self.baskets_empty.winfo_ismapped():
+                self.baskets_empty.pack(anchor="w", padx=12, pady=12)
+            if self.tree_baskets.winfo_ismapped():
+                self.tree_baskets.pack_forget()
             return
+            
+        if self.baskets_empty.winfo_ismapped():
+            self.baskets_empty.pack_forget()
+        
+        if not self.tree_baskets.winfo_ismapped():
+            self.tree_baskets.pack(side="left", fill="both", expand=True)
+            
         for b in data:
-            row = tk.Frame(self.baskets_box, bg=self.PANEL)
-            row.pack(fill="x", padx=10, pady=3)
-            tk.Label(row, text=b.get("name", "Sọt ?"), fg="#e2e8f0", bg=self.PANEL,
-                     font=("Segoe UI", 10, "bold"), width=10, anchor="w").pack(side="left")
-            tk.Label(row, text=f"Total {b.get('total', 0)}", fg="#4ade80", bg=self.PANEL,
-                     font=("Segoe UI", 10, "bold"), width=12, anchor="w").pack(side="left")
-            by = b.get("by_carrier", {})
-            detail = "   ".join(f"{k}: {v}" for k, v in by.items()) or "(rỗng)"
-            tk.Label(row, text=detail, fg="#cbd5e1", bg=self.PANEL,
-                     font=("Consolas", 10), anchor="w").pack(side="left", fill="x", expand=True)
-            closed = (b.get("closed_at") or "")[11:19]  # HH:MM:SS UTC
-            tk.Label(row, text=closed, fg="#64748b", bg=self.PANEL,
-                     font=("Consolas", 9)).pack(side="right", padx=6)
+            seq = b.get('name', 'Sọt ?')
+            total = b.get("total", 0)
+            
+            # Formatting by_carrier dict to string
+            by_carrier = b.get("by_carrier", {})
+            details_arr = [f"{k}: {v}" for k, v in by_carrier.items() if v > 0]
+            details = " | ".join(details_arr) if details_arr else "Trống"
+            
+            time_str = (b.get("closed_at") or "")[:19].replace("T", " ")
+            self.tree_baskets.insert("", "end", values=(seq, total, details, time_str))
 
     # --- vòng lặp cập nhật GUI ---
     def _poll(self):
