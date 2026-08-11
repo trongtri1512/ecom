@@ -205,10 +205,22 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                     page.wait_for_timeout(2000)
             except Exception as click_err:
                 print(f"[scan_import] Lỗi khi bấm Bàn giao 3PL: {click_err}")
+            # 9) Lấy số lượng thực tế từ giao diện (bởi vì OPS có thể tự động loại bỏ mã trùng)
+            actual_entered = entered
+            try:
+                # Tìm phần tử chứa "Số lượng kiện hàng"
+                # Thường OPS hiển thị: "Số lượng kiện hàng bàn giao: 70" hoặc tương tự
+                info_text = page.locator("body").inner_text()
+                import re
+                m_count = re.search(r"(?:Số lượng kiện hàng bàn giao|Số kiện hàng|Số lượng|Tổng số kiện)[\s:]*(\d+)", info_text, re.IGNORECASE)
+                if m_count:
+                    actual_entered = int(m_count.group(1))
+            except Exception as e:
+                print(f"[scan_import] Không đọc được số lượng thực tế: {e}")
 
             _save_screenshot(page, "scan_complete")
             return {"ok": True, "error": "", "ops_session_id": ops_session_id,
-                    "codes_entered": entered, "screenshot_file": "", "failed_codes": failed_codes}
+                    "codes_entered": actual_entered, "screenshot_file": "", "failed_codes": failed_codes}
         except Exception as e:
             shot = _save_screenshot(page, "scan_error")
             return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:400]}",
@@ -362,10 +374,23 @@ def _extract_session_id(page, retries=4) -> str:
             return m.group(1)
             
         try:
-            body = page.inner_text("body")
-            m2 = re.search(r"\b" + pattern + r"\b", body)
-            if m2:
-                return m2.group(1)
+            # Lấy từng text node riêng lẻ để không bị dính chữ (ví dụ dính với chữ 'Mới' của badge)
+            texts = page.evaluate('''() => {
+                const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+                const arr = [];
+                let node;
+                while (node = walker.nextNode()) {
+                    let val = node.nodeValue.trim();
+                    if (val) arr.push(val);
+                }
+                return arr;
+            }''')
+            
+            for t in texts:
+                # (?<![A-Za-z]) ngăn việc match bên trong ORMVEC...
+                m2 = re.search(r"(?<![A-Za-z])(" + pattern + r")(?![A-Za-z0-9])", t)
+                if m2:
+                    return m2.group(1)
         except Exception:
             pass
             

@@ -579,7 +579,11 @@ def ops_import_now(
             session_id = result.get("ops_session_id") or stamp
             failed_codes = result.get("failed_codes", [])
             successful_codes = [c for c in codes if c not in failed_codes]
-            entered = len(successful_codes)
+            # Sử dụng số lượng thực tế trả về từ uploader thay vì đếm số mã thành công giả định
+            if result.get("codes_entered"):
+                entered = result.get("codes_entered")
+            else:
+                entered = len(successful_codes)
             
             # Cập nhật session_id cho các mã thành công
             for r in rows:
