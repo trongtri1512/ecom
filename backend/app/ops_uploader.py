@@ -129,6 +129,7 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                         if del_btn.is_visible():
                             print("[scan-import] Xóa 1 mã bị trùng/lỗi khỏi danh sách.")
                             del_btn.click(force=True)
+                            entered -= 1  # Giảm số lượng thực tế import thành công
                             page.wait_for_timeout(500)
                             # Đóng popup xác nhận xóa (nếu hệ thống có hỏi "Bạn có chắc...")
                             for confirm_btn in page.locator("button:has-text('ĐỒNG Ý'), button:has-text('Xác nhận'), button:has-text('Xoá')").all():
@@ -312,7 +313,7 @@ def _extract_session_id(page) -> str:
     new_url = page.url
     # Pattern chung cho nhiều hãng: 
     # SPXCCE..., MVECCE..., JTE..., BEX...
-    pattern = r"([A-Z]{2,6}CCE[A-Z0-9]{4,20}|JTE[A-Z0-9]{6,20}|BEX[A-Z0-9]{6,20}|[A-Z]{2,}[A-Z0-9]{8,})"
+    pattern = r"([A-Z]{2,6}CCE[A-Z0-9]{4,20}|JTE[A-Z0-9]{6,20}|BEX[A-Z0-9]{6,20})"
     
     m = re.search(pattern, new_url)
     if m:
