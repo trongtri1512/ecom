@@ -51,7 +51,7 @@ AUTO_IMPORT_BATCH = int(_get("AUTO_IMPORT_BATCH", "100") or "100")
 # Bật/tắt tính năng auto import.
 AUTO_IMPORT_ENABLED = _get("AUTO_IMPORT_ENABLED", "false").lower() in ("1", "true", "yes")
 # Map hãng -> {template_id, partner_name} (JSON string trong env). Ví dụ:
-#   OPS_CARRIER_MAP='{"SPX":{"template_id":2,"partner":"SPX Express"},"J&T":{"template_id":2,"partner":"J&T Express"},"GHN":{"template_id":2,"partner":"Giao Hàng Nhanh"},"Best":{"template_id":2,"partner":"BEST Express"},"Viettel":{"template_id":2,"partner":"Viettel Post"}}'
+#   OPS_CARRIER_MAP='{"SPX":{"template_id":2,"partner":"SPX Express"},"J&T":{"template_id":2,"partner":"J&T Express"},"GHN":{"template_id":2,"partner":"Giao Hàng Nhanh"},"Best Express":{"template_id":2,"partner":"BEST Express"},"Viettel Post":{"template_id":2,"partner":"Viettel Post"}}'
 import json as _json
 try:
     OPS_CARRIER_MAP = _json.loads(_get("OPS_CARRIER_MAP", "{}") or "{}")

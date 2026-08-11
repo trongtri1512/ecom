@@ -122,7 +122,7 @@ Cấu hình `OPS_CARRIER_MAP` (JSON) map từng hãng → `template_id` (số cu
 tên partner (dù không còn dùng để chọn dropdown nhưng vẫn cần cấu hình để bật tính năng auto-import cho hãng đó).
 
 ```env
-OPS_CARRIER_MAP={"SPX":{"template_id":2,"partner":"SPX Express"},"J&T":{"template_id":2,"partner":"J&T Express"},"GHN":{"template_id":2,"partner":"Giao Hàng Nhanh"},"Best":{"template_id":2,"partner":"BEST Express"},"Viettel":{"template_id":2,"partner":"Viettel Post"}}
+OPS_CARRIER_MAP={"SPX":{"template_id":2,"partner":"SPX Express"},"J&T":{"template_id":2,"partner":"J&T Express"},"GHN":{"template_id":2,"partner":"Giao Hàng Nhanh"},"Best Express":{"template_id":2,"partner":"BEST Express"},"Viettel Post":{"template_id":2,"partner":"Viettel Post"}}
 ```
 Test cấu hình bằng: `curl -X POST 'http://<host>/api/ops/import-now?carrier=SPX'`.
 
