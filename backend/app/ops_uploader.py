@@ -110,6 +110,7 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
             page.wait_for_timeout(2000)
 
             # 5.5) Tự động xóa các kiện trùng / lỗi trên bảng để nút TẠO được hiển thị
+            failed_codes = []
             try:
                 # Đóng các toast/modal cảnh báo chung nếu có
                 for _ in range(2):
@@ -123,8 +124,13 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                 for row in rows:
                     if not row.is_visible(): continue
                     txt = row.inner_text().lower()
-                    # Nhận diện lỗi: trùng, tồn tại, đã lấy hàng, thành công (đã bàn giao)...
-                    if "trùng" in txt or "tồn tại" in txt or "đã lấy hàng" in txt or "thành công" in txt or "lỗi" in txt:
+                    # Nhận diện lỗi: trùng, tồn tại, đã lấy hàng, lỗi...
+                    if "trùng" in txt or "tồn tại" in txt or "đã lấy hàng" in txt or "lỗi" in txt:
+                        # Ghi nhận mã bị lỗi bằng cách quét xem mã nào có trong text của dòng này
+                        for code in codes:
+                            if code.strip().lower() in txt and code.strip() not in failed_codes:
+                                failed_codes.append(code.strip())
+
                         del_btn = row.locator("[icon='trash'], .nb-trash, i.fa-trash, button:has-text('Xóa'), button[title='Xóa']").first
                         if del_btn.is_visible():
                             print("[scan-import] Xóa 1 mã bị trùng/lỗi khỏi danh sách.")
@@ -163,15 +169,15 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
             if "không có quyền" in body.lower() or "access denied" in body.lower():
                 shot = _save_screenshot(page, "no_permission")
                 return {"ok": False, "error": "Không có quyền truy cập",
-                        "screenshot_file": shot, "codes_entered": entered}
+                        "screenshot_file": shot, "codes_entered": entered, "failed_codes": failed_codes}
 
             _save_screenshot(page, "scan_complete")
             return {"ok": True, "error": "", "ops_session_id": ops_session_id,
-                    "codes_entered": entered, "screenshot_file": ""}
+                    "codes_entered": entered, "screenshot_file": "", "failed_codes": failed_codes}
         except Exception as e:
             shot = _save_screenshot(page, "scan_error")
             return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:400]}",
-                    "screenshot_file": shot, "codes_entered": 0}
+                    "screenshot_file": shot, "codes_entered": 0, "failed_codes": failed_codes if 'failed_codes' in locals() else []}
         finally:
             browser.close()
 

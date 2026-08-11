@@ -665,7 +665,7 @@ def delete_session(session_id: str, db: Session = Depends(get_db)):
     db.execute(
         update(Scan)
         .where(Scan.session_id == session_id)
-        .values(session_id=None)
+        .values(session_id="")
     )
     # Xóa log
     db.execute(
