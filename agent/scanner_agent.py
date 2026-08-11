@@ -227,12 +227,20 @@ class Sender:
         return result
 
     def get_summary_today(self):
-        """Lấy thống kê HÔM NAY từ server: {total, by_carrier, carrier_order}.
-
-        Trả None nếu không gọi được (mất mạng / server lỗi).
-        """
+        """Lấy thống kê HÔM NAY từ server (chỉ lấy order của các hãng)."""
         try:
             r = self.session.get(self.cfg["url"] + "/api/summary?period=day", timeout=8)
+            if r.status_code == 200:
+                return r.json()
+        except requests.RequestException:
+            pass
+        return None
+
+    def get_current_basket(self):
+        """Lấy thống kê sọt HIỆN TẠI của máy này từ server."""
+        try:
+            r = self.session.get(self.cfg["url"] + "/api/baskets/current", 
+                                 params={"agent_name": self.cfg["name"]}, timeout=8)
             if r.status_code == 200:
                 return r.json()
         except requests.RequestException:
@@ -430,7 +438,7 @@ class AgentWindow:
         self.state = state
         self.q = event_queue
         self.count_session = 0
-        self._summary = None          # summary ngày mới nhất (dict) từ server
+        self._summary = None          # summary sọt hiện tại (dict) từ server
         self._summary_lock = threading.Lock()
         self._kpi_widgets = {}        # tên ĐVVC -> label giá trị
         self._logo_imgs = {}          # tên ĐVVC -> ImageTk (cache logo)
@@ -483,14 +491,16 @@ class AgentWindow:
         right.grid(row=0, column=1, sticky="nsew")
         head = tk.Frame(right, bg=self.BG)
         head.pack(fill="x")
-        tk.Label(head, text="SỐ LƯỢNG THEO ĐƠN VỊ VẬN CHUYỂN (HÔM NAY)",
-                 fg="#94a3b8", bg=self.BG, font=("Segoe UI", 9, "bold")).pack(side="left", pady=(0, 4))
+        self.lbl_kpi_title = tk.Label(head, text="SỐ LƯỢNG THEO ĐƠN VỊ VẬN CHUYỂN (SỌT 1)",
+                 fg="#94a3b8", bg=self.BG, font=("Segoe UI", 9, "bold"))
+        self.lbl_kpi_title.pack(side="left", pady=(0, 4))
 
         # Thẻ Tổng (nổi bật)
         total_card = tk.Frame(right, bg="#2563eb")
         total_card.pack(fill="x", pady=(2, 10))
-        tk.Label(total_card, text="TỔNG ĐƠN HÔM NAY", fg="#dbeafe", bg="#2563eb",
-                 font=("Segoe UI", 10)).pack(anchor="w", padx=14, pady=(10, 0))
+        self.lbl_total_title = tk.Label(total_card, text="TỔNG ĐƠN (SỌT 1)", fg="#dbeafe", bg="#2563eb",
+                 font=("Segoe UI", 10))
+        self.lbl_total_title.pack(anchor="w", padx=14, pady=(10, 0))
         self.total_lbl = tk.Label(total_card, text="0", fg="white", bg="#2563eb",
                                   font=("Segoe UI", 30, "bold"))
         self.total_lbl.pack(anchor="w", padx=14, pady=(0, 10))
@@ -606,7 +616,7 @@ class AgentWindow:
         threading.Thread(target=loop, daemon=True).start()
 
     def _pull_all(self):
-        s = self.state["sender"].get_summary_today()
+        s = self.state["sender"].get_current_basket()
         if s is not None:
             with self._summary_lock:
                 self._summary = s
@@ -628,6 +638,11 @@ class AgentWindow:
             s = self._summary
         if not s:
             return
+        
+        seq = s.get("seq", 1)
+        self.lbl_kpi_title.config(text=f"SỐ LƯỢNG THEO ĐƠN VỊ VẬN CHUYỂN (SỌT {seq})")
+        self.lbl_total_title.config(text=f"TỔNG ĐƠN (SỌT {seq})")
+        
         self.total_lbl.config(text=str(s.get("total", 0)))
         order = s.get("carrier_order", [])
         by = s.get("by_carrier", {})

@@ -518,6 +518,61 @@ def _try_auto_import():
         db.close()
 
 
+def _force_auto_import_all():
+    """Chạy nền: Khi bấm 'Hoàn thành sọt', tự động đẩy TOÀN BỘ đơn chờ lên OPS tuần tự."""
+    from . import ops_uploader
+    if not (config.OPS_USER and config.OPS_PASS):
+        return
+    db = SessionLocal()
+    try:
+        # Lấy danh sách các ĐVVC có mã đã lấy hàng (picked) nhưng chưa import
+        stmt = select(Scan.carrier).where(Scan.session_id == "", Scan.pickup_status == "picked").group_by(Scan.carrier)
+        carriers = db.scalars(stmt).all()
+        
+        for carrier in carriers:
+            cfg = _get_ops_config_for_carrier(db, carrier)
+            if not cfg:
+                print(f"[force-import] Bỏ qua {carrier} vì chưa cấu hình đối tác OPS")
+                continue
+                
+            template_id = cfg["template_id"]
+            partner = cfg["partner"]
+            
+            scans = db.scalars(select(Scan).where(Scan.carrier == carrier, Scan.session_id == "", Scan.pickup_status == "picked").order_by(Scan.scanned_at.asc())).all()
+            if not scans:
+                continue
+                
+            codes = [s.code for s in scans]
+            stamp = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{carrier}"
+            print(f"[force-import] {carrier}: Bắt đầu nhập {len(codes)} đơn")
+            
+            result = ops_uploader.scan_import(carrier, codes, template_id, partner, stamp)
+            if result.get("ok"):
+                session_id = result.get("ops_session_id") or stamp
+                failed_codes = result.get("failed_codes", [])
+                successful_codes = [c for c in codes if c not in failed_codes]
+                entered = len(successful_codes)
+                
+                for r in scans:
+                    if r.code in successful_codes:
+                        r.session_id = session_id
+                        
+                if failed_codes:
+                    db.execute(delete(Scan).where(Scan.code.in_(failed_codes)))
+                    
+                db.commit()
+                _log_ops(db, "success", "force_import", carrier, entered,
+                         session_id, f"Hoàn thành sọt: Đẩy tuần tự {entered} mã.", "")
+                events.publish("auto_import", {"carrier": carrier, "count": entered, "session_id": session_id})
+            else:
+                err = result.get("error", "")
+                shot = result.get("screenshot_file", "")
+                _log_ops(db, "error", "force_import", carrier, len(codes), "", err, shot)
+                events.publish("auto_import_error", {"carrier": carrier, "error": err})
+    finally:
+        db.close()
+
+
 def _log_ops(db, level: str, action: str, carrier: str, count: int,
              session_id: str, message: str, screenshot_file: str):
     """Ghi 1 dòng OpsLog. Không raise nếu insert lỗi (không cản luồng chính)."""
@@ -821,7 +876,51 @@ def close_basket(
     db.commit()
     db.refresh(basket)
     events.publish("basket_close", basket.as_dict())
+    
+    # Kích hoạt chạy nền đồng bộ lên OPS tuần tự ngay lập tức
+    import threading
+    threading.Thread(target=_force_auto_import_all, daemon=True).start()
+    
     return basket.as_dict()
+
+
+@app.get("/api/baskets/current")
+def current_basket_stats(
+    agent_name: str = Query(..., description="tên máy quét"),
+    db: Session = Depends(get_db)
+):
+    """Lấy thống kê tạm thời của sọt HIỆN TẠI đang quét (chưa chốt)."""
+    now = datetime.now(timezone.utc)
+    frm, _ = period_range("day")
+    last_basket = db.scalar(
+        select(Basket).where(Basket.source_agent == agent_name)
+        .where(Basket.closed_at >= frm)
+        .order_by(Basket.seq.desc()).limit(1)
+    )
+    started_at = last_basket.closed_at if last_basket else frm
+    next_seq = (last_basket.seq + 1) if last_basket else 1
+
+    rows = db.execute(
+        select(Scan.carrier, func.count())
+        .where(Scan.source_agent == agent_name,
+               Scan.scanned_at > started_at, Scan.scanned_at <= now)
+        .group_by(Scan.carrier)
+    ).all()
+    by_carrier = {c: int(n) for c, n in rows}
+    total = sum(by_carrier.values())
+    
+    # Lấy luôn danh sách carrier config để agent dễ render
+    names = carrier_names(db)
+    counts = {name: 0 for name in names}
+    for name, cnt in by_carrier.items():
+        counts[name] = counts.get(name, 0) + cnt
+        
+    return {
+        "seq": next_seq,
+        "total": total,
+        "by_carrier": counts,
+        "carrier_order": names
+    }
 
 
 @app.get("/api/baskets")
