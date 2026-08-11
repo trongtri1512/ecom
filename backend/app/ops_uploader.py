@@ -57,11 +57,9 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                       wait_until="networkidle")
             page.wait_for_timeout(2000)
 
-            # 3) Chọn Đối tác vận chuyển TRƯỚC khi nhập mã
-            _select_partner(page, partner_name)
-            page.wait_for_timeout(500)
-
-            # 4) Tìm ô nhập mã (ô quét mã kiện hàng)
+            # 3) Tìm ô nhập mã (ô quét mã kiện hàng)
+            #    OPS tự nhận dạng đối tác vận chuyển khi nhập mã đầu tiên,
+            #    KHÔNG cần chọn đối tác thủ công.
             scan_input = _find_first(page, [
                 "input[placeholder*='kiện hàng']",
                 "input[placeholder*='vận đơn']",
@@ -73,7 +71,7 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                 _save_screenshot(page, "scan_input_not_found")
                 return {"ok": False, "error": "Không tìm thấy ô nhập mã quét"}
 
-            # 5) Gõ từng mã → Enter
+            # 4) Gõ từng mã → Enter (hoặc click nút >>)
             entered = 0
             for code in codes:
                 code = code.strip()
@@ -81,10 +79,17 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                     continue
                 scan_input.fill(code)
                 page.wait_for_timeout(200)
-                scan_input.press("Enter")
+                # Nhấn Enter hoặc click nút >> để submit mã.
+                try:
+                    scan_input.press("Enter")
+                except Exception:
+                    # Fallback: click nút >> bên cạnh ô input.
+                    try:
+                        _click_first(page, ["button:has-text('>>')", "button:near(input)"])
+                    except Exception:
+                        pass
                 page.wait_for_timeout(random.uniform(400, 800))
                 entered += 1
-                # Log tiến trình mỗi 50 mã.
                 if entered % 50 == 0:
                     print(f"[scan-import] {carrier}: đã nhập {entered}/{len(codes)} mã")
 
