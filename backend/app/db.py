@@ -51,8 +51,9 @@ def _run_light_migrations():
     if "carrier_rules" in tables:
         cols = {c["name"] for c in inspector.get_columns("carrier_rules")}
         if "auto_import_enabled" not in cols:
-            # boolean lưu bằng int 0/1 để tương thích SQLite; SQLAlchemy tự map.
-            to_add.append("ALTER TABLE carrier_rules ADD COLUMN auto_import_enabled BOOLEAN NOT NULL DEFAULT 0")
+            # Postgres nghiêm ngặt: BOOLEAN không nhận DEFAULT 0, phải FALSE.
+            # SQLite nhận cả FALSE lẫn 0 -> dùng FALSE để tương thích cả 2.
+            to_add.append("ALTER TABLE carrier_rules ADD COLUMN auto_import_enabled BOOLEAN NOT NULL DEFAULT FALSE")
         if "auto_import_batch" not in cols:
             to_add.append("ALTER TABLE carrier_rules ADD COLUMN auto_import_batch INTEGER NOT NULL DEFAULT 100")
         if "ops_template_id" not in cols:
