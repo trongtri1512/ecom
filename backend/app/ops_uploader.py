@@ -380,23 +380,15 @@ def _extract_session_id(page, retries=4) -> str:
             return m.group(1)
             
         try:
-            # Lấy từng text node riêng lẻ để không bị dính chữ (ví dụ dính với chữ 'Mới' của badge)
-            texts = page.evaluate('''() => {
-                const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
-                const arr = [];
-                let node;
-                while (node = walker.nextNode()) {
-                    let val = node.nodeValue.trim();
-                    if (val) arr.push(val);
-                }
-                return arr;
-            }''')
+            # Đọc toàn bộ chữ trên màn hình (hỗ trợ xuyên Shadow DOM)
+            body = page.inner_text("body")
+            # Xóa các chữ thường dính liền vào mã phiên do UI (ví dụ badge "Mới", nút "Sao chép")
+            body_clean = body.replace("Mới", " ").replace("Sao chép", " ").replace("Copy", " ")
             
-            for t in texts:
-                # (?<![A-Za-z]) ngăn việc match bên trong ORMVEC...
-                m2 = re.search(r"(?<![A-Za-z])(" + pattern + r")(?![A-Za-z0-9])", t)
-                if m2:
-                    return m2.group(1)
+            # (?<![A-Za-z]) ngăn match bên trong mã tracking như ORMVEC...
+            m2 = re.search(r"(?<![A-Za-z])(" + pattern + r")(?![A-Za-z0-9])", body_clean)
+            if m2:
+                return m2.group(1)
         except Exception:
             pass
             
