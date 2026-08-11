@@ -119,9 +119,10 @@ tiếp theo server sẽ tự:
 3. Gán `session_id` cho 100 mã đó để không import lại.
 
 Cấu hình `OPS_CARRIER_MAP` (JSON) map từng hãng → `template_id` (số cuối URL) +
-`partner` (tên hiển thị trong dropdown "Đối tác vận chuyển"). Ví dụ:
-```
-OPS_CARRIER_MAP={"SPX":{"template_id":2,"partner":"SPX Express"},"J&T":{"template_id":2,"partner":"J&T Express"}}
+tên partner (dù không còn dùng để chọn dropdown nhưng vẫn cần cấu hình để bật tính năng auto-import cho hãng đó).
+
+```env
+OPS_CARRIER_MAP={"SPX":{"template_id":2,"partner":"SPX Express"},"J&T":{"template_id":2,"partner":"J&T Express"},"GHN":{"template_id":2,"partner":"Giao Hàng Nhanh"},"Best":{"template_id":2,"partner":"BEST Express"},"Viettel":{"template_id":2,"partner":"Viettel Post"}}
 ```
 Test cấu hình bằng: `curl -X POST 'http://<host>/api/ops/import-now?carrier=SPX'`.
 
