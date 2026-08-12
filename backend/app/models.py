@@ -74,6 +74,16 @@ class Basket(Base):
     total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # JSON string: {"SPX": 20, "J&T": 15, ...}. Đơn giản là text để hỗ trợ cả SQLite/Postgres.
     by_carrier_json: Mapped[str] = mapped_column(String(2000), nullable=False, default="{}")
+    # Trạng thái bàn giao lên OPS: "" = chưa bàn giao | "done" = đã bàn giao thành
+    # công tất cả | "partial" = có mã lỗi bị OPS loại | "failed" = fail hoàn toàn.
+    ops_status: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    # Thời điểm bàn giao gần nhất (UTC).
+    ops_handed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Mã phiên OPS đã cấp (nhiều carrier có thể tạo nhiều phiên -> lưu JSON
+    # {"SPX": "MVECCE...", "J&T": "JTECCE..."}).
+    ops_sessions_json: Mapped[str] = mapped_column(String(2000), nullable=False, default="{}")
+    # Nhật ký chi tiết mã lỗi: [{"code": "...", "reason": "đã tồn tại"}, ...].
+    ops_errors_json: Mapped[str] = mapped_column(String(8000), nullable=False, default="[]")
 
     def as_dict(self) -> dict:
         import json
@@ -81,6 +91,14 @@ class Basket(Base):
             by_carrier = json.loads(self.by_carrier_json or "{}")
         except Exception:
             by_carrier = {}
+        try:
+            ops_sessions = json.loads(self.ops_sessions_json or "{}")
+        except Exception:
+            ops_sessions = {}
+        try:
+            ops_errors = json.loads(self.ops_errors_json or "[]")
+        except Exception:
+            ops_errors = []
         return {
             "id": self.id,
             "seq": self.seq,
@@ -90,6 +108,10 @@ class Basket(Base):
             "closed_at": self.closed_at.isoformat() if self.closed_at else None,
             "total": self.total,
             "by_carrier": by_carrier,
+            "ops_status": self.ops_status or "",
+            "ops_handed_at": self.ops_handed_at.isoformat() if self.ops_handed_at else None,
+            "ops_sessions": ops_sessions,
+            "ops_errors": ops_errors,
         }
 
 

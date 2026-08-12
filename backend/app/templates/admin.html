@@ -369,7 +369,7 @@
           </div>
         </div>
         <div class="card-body no-pad" style="overflow-x:auto;">
-          <table class="compact-table" style="width:100%;min-width:900px;">
+          <table class="compact-table" style="width:100%;min-width:1200px;">
             <thead>
               <tr>
                 <th>Thời gian chốt</th>
@@ -377,6 +377,8 @@
                 <th>Sọt</th>
                 <th style="text-align:right;">Tổng</th>
                 <th>Chi tiết ĐVVC</th>
+                <th>Trạng thái OPS</th>
+                <th>Mã phiên OPS</th>
                 <th style="text-align:center;">Thao tác</th>
               </tr>
             </thead>
@@ -432,6 +434,16 @@
       <textarea id="textModalContent" readonly style="width:100%;height:200px;background:var(--bg);color:var(--text);border:1px solid var(--line);padding:10px;border-radius:6px;font-family:Consolas,monospace;font-size:13px;resize:vertical;line-height:1.5;"></textarea>
       <div style="text-align:right;margin-top:14px;">
         <button class="btn" onclick="document.getElementById('textModal').hidden=true">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal nhật ký sọt (mã phiên + mã lỗi) -->
+  <div id="basketLogModal" class="modal" hidden>
+    <div class="modal-box-md" style="width:720px;max-height:80vh;overflow-y:auto;">
+      <div id="basketLogContent"></div>
+      <div style="text-align:right;margin-top:14px;border-top:1px solid var(--line);padding-top:12px;">
+        <button class="btn" onclick="document.getElementById('basketLogModal').hidden=true">Đóng</button>
       </div>
     </div>
   </div>
@@ -664,10 +676,13 @@
   });
 
   /* ================ BASKETS ================ */
+  // Cache basket data để mở modal xem lỗi không cần fetch lại.
+  let basketsCache = [];
   async function loadBaskets() {
     try {
       const data = await api("/api/baskets?period=day");
       const items = data.items || [];
+      basketsCache = items;
       $("#basketEmpty").hidden = items.length > 0;
       $("#basketCount").textContent = items.length;
       let html = "";
@@ -675,6 +690,30 @@
         const dt = fmtDT(b.closed_at);
         const byCarrier = b.by_carrier || {};
         const details = Object.entries(byCarrier).filter(x => x[1] > 0).map(x => `${x[0]}: ${x[1]}`).join(" · ") || "(rỗng)";
+        // Trạng thái bàn giao OPS
+        const status = b.ops_status || "";
+        const errorCount = (b.ops_errors || []).length;
+        const sessions = b.ops_sessions || {};
+        const sessCount = Object.keys(sessions).length;
+        let statusBadge;
+        if (status === "done") {
+          statusBadge = `<span class="badge-lv success">✅ Đã bàn giao</span>`;
+        } else if (status === "partial") {
+          statusBadge = `<span class="badge-lv" style="background:rgba(245,158,11,.18);color:#fbbf24;">⚠ Bàn giao 1 phần</span>`;
+        } else if (status === "failed") {
+          statusBadge = `<span class="badge-lv error">❌ Thất bại</span>`;
+        } else {
+          statusBadge = `<span class="badge-lv info">⏳ Chưa bàn giao</span>`;
+        }
+        // Mã phiên OPS đã cấp
+        const sessInfo = sessCount
+          ? Object.entries(sessions).map(([c, s]) => `<code style="font-size:11px;">${esc(c)}: ${esc(s)}</code>`).join("<br>")
+          : "—";
+        // Nút thao tác: nếu đã done thì chỉ hiện Log/Nhật ký; nếu chưa/lỗi thì cho phép bàn giao lại
+        const actionBtn = (status === "done")
+          ? `<button class="btn btn-ghost btn-view-log" data-id="${b.id}" style="padding:4px 10px;font-size:12px;">📋 Xem nhật ký${errorCount ? ` (${errorCount}⚠)` : ""}</button>`
+          : `<button class="btn btn-primary btn-post-basket" data-id="${b.id}" style="padding:4px 10px;font-size:12px;">📤 Bàn giao OPS</button>
+             ${errorCount ? `<button class="btn btn-ghost btn-view-log" data-id="${b.id}" style="padding:4px 10px;font-size:12px;margin-left:4px;">📋 Nhật ký (${errorCount}⚠)</button>` : ""}`;
         html += `
           <tr>
             <td style="font-family:Consolas,monospace;font-size:12px;">${dt}</td>
@@ -682,9 +721,9 @@
             <td>${esc(b.name)}</td>
             <td style="text-align:right;font-weight:700;color:#4ade80;">${b.total}</td>
             <td style="font-family:Consolas,monospace;font-size:12px;color:var(--muted);">${esc(details)}</td>
-            <td style="text-align:center;">
-              <button class="btn btn-primary btn-post-basket" data-id="${b.id}" style="padding:4px 10px;font-size:12px;">📤 Bàn giao OPS</button>
-            </td>
+            <td>${statusBadge}</td>
+            <td>${sessInfo}</td>
+            <td style="text-align:center;">${actionBtn}</td>
           </tr>
         `;
       }
@@ -714,6 +753,16 @@
     }
   });
   $("#basketRows").addEventListener("click", async (e) => {
+    // Nút "Xem nhật ký" - hiện modal chi tiết mã phiên + lỗi
+    const viewBtn = e.target.closest(".btn-view-log");
+    if (viewBtn) {
+      const id = parseInt(viewBtn.dataset.id, 10);
+      const b = basketsCache.find(x => x.id === id);
+      if (!b) return;
+      openBasketLog(b);
+      return;
+    }
+    // Nút Bàn giao OPS
     const btn = e.target.closest(".btn-post-basket");
     if (!btn) return;
     const id = btn.dataset.id;
@@ -725,11 +774,15 @@
       if (res.status === "done") {
         let msg = "";
         for (const r of (res.results || [])) {
-          if (r.status === "ok") msg += `✅ ${r.carrier}: Xong ${r.count} mã.\n`;
-          else msg += `❌ ${r.carrier}: ${r.error}\n`;
+          if (r.status === "ok") {
+            const failTxt = r.failed ? ` (${r.failed} mã lỗi)` : "";
+            msg += `✅ ${r.carrier}: OK ${r.count} mã${failTxt}. Phiên: ${r.session_id}\n`;
+          } else {
+            msg += `❌ ${r.carrier}: ${r.error}\n`;
+          }
         }
         if (!msg) msg = "Không có mã nào cần đẩy.";
-        alert("KẾT QUẢ:\n\n" + msg);
+        alert("KẾT QUẢ BÀN GIAO SỌT:\n\n" + msg + "\n(Xem chi tiết mã lỗi trong nút 📋 Nhật ký của sọt.)");
         loadLogs(); loadBaskets();
       } else if (res.status === "empty") {
         alert(res.message);
@@ -739,6 +792,59 @@
     } catch (err) { toast("Lỗi", String(err), "danger"); }
     finally { btn.innerHTML = oldText; btn.disabled = false; }
   });
+
+  // Modal nhật ký sọt: hiện danh sách mã phiên OPS + bảng mã lỗi + lý do.
+  function openBasketLog(b) {
+    const sessions = b.ops_sessions || {};
+    const errors = b.ops_errors || [];
+    let html = `<h3 style="margin:0 0 12px;">📋 Nhật ký bàn giao — ${esc(b.name)} (${esc(b.source_agent)})</h3>`;
+    html += `<div style="color:var(--muted);font-size:12px;margin-bottom:14px;">Chốt lúc: ${fmtDT(b.closed_at)} · Tổng ${b.total} mã · Bàn giao lúc: ${b.ops_handed_at ? fmtDT(b.ops_handed_at) : "—"}</div>`;
+    // Sessions
+    html += `<div style="margin-bottom:14px;"><b style="color:#4ade80;">Mã phiên OPS đã cấp:</b><br>`;
+    if (Object.keys(sessions).length) {
+      for (const [c, s] of Object.entries(sessions)) {
+        html += `<div style="margin-top:4px;">• <b>${esc(c)}</b>: <code style="font-size:12px;background:var(--panel-2);padding:2px 8px;border-radius:4px;">${esc(s)}</code></div>`;
+      }
+    } else {
+      html += `<div style="color:var(--muted);font-size:12px;">(chưa có)</div>`;
+    }
+    html += `</div>`;
+    // Errors
+    html += `<div><b style="color:#fca5a5;">Mã lỗi (${errors.length}):</b>`;
+    if (errors.length) {
+      html += `<table style="width:100%;margin-top:8px;border-collapse:collapse;">
+        <thead><tr style="background:var(--panel-2);"><th style="text-align:left;padding:6px 10px;font-size:11px;color:var(--muted);">Mã vận đơn</th><th style="text-align:left;padding:6px 10px;font-size:11px;color:var(--muted);">ĐVVC</th><th style="text-align:left;padding:6px 10px;font-size:11px;color:var(--muted);">Lý do</th></tr></thead><tbody>`;
+      for (const e of errors) {
+        html += `<tr style="border-bottom:1px solid var(--line);">
+          <td style="padding:6px 10px;font-family:Consolas,monospace;font-size:12px;">${esc(e.code || "-")}</td>
+          <td style="padding:6px 10px;font-size:12px;">${esc(e.carrier || "-")}</td>
+          <td style="padding:6px 10px;font-size:12px;color:#fbbf24;">${esc(e.reason || "?")}</td>
+        </tr>`;
+      }
+      html += `</tbody></table>`;
+    } else {
+      html += `<div style="color:var(--muted);font-size:12px;margin-top:4px;">(không có mã lỗi)</div>`;
+    }
+    html += `</div>`;
+    // Nút copy mã lỗi ra clipboard
+    if (errors.length) {
+      html += `<div style="text-align:right;margin-top:14px;">
+        <button class="btn btn-ghost" id="btnCopyErrCodes">📋 Copy mã lỗi</button>
+      </div>`;
+    }
+    $("#basketLogContent").innerHTML = html;
+    $("#basketLogModal").hidden = false;
+    // Bind copy nếu có
+    const cb = $("#btnCopyErrCodes");
+    if (cb) {
+      cb.addEventListener("click", () => {
+        const txt = errors.map(x => x.code).join("\n");
+        navigator.clipboard.writeText(txt).then(() =>
+          toast("Đã copy", `${errors.length} mã lỗi`, "ok")
+        );
+      });
+    }
+  }
 
   /* ================ LOGS ================ */
   const LEVEL_COLOR = {

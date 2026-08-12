@@ -73,7 +73,16 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
 
             # 4) Gõ từng mã → Enter (hoặc click nút >>)
             entered = 0
-            failed_codes = []
+            failed_codes = []  # backward-compat
+            failed_details: list[dict] = []  # [{code, reason}]
+
+            def _mark_failed(code: str, reason: str):
+                """Ghi nhận mã bị lỗi + lý do (chỉ 1 lần cho mỗi mã)."""
+                if code in failed_codes:
+                    return
+                failed_codes.append(code)
+                failed_details.append({"code": code, "reason": reason[:200] if reason else "OPS loại"})
+
             for code in codes:
                 code = code.strip()
                 if not code:
@@ -89,19 +98,32 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                         _click_first(page, ["button:has-text('>>')", "button:near(input)"])
                     except Exception:
                         pass
-                
+
                 # Chờ một chút để web xử lý mã
                 page.wait_for_timeout(random.uniform(400, 800))
-                
-                # Nếu có popup cảnh báo lỗi cho mã này (VD: "Kiện hàng đã tồn tại"), bấm OK để bỏ qua ngay
+
+                # Nếu có popup cảnh báo lỗi cho mã này (VD: "Kiện hàng đã tồn tại"),
+                # ĐỌC text popup để lưu lý do CỤ THỂ trước khi bấm OK.
                 try:
-                    for btn in page.locator("button:has-text('OK'), button:has-text('ĐỒNG Ý'), button:has-text('Đóng')").all():
-                        if btn.is_visible():
-                            print(f"[scan-import] Đóng thông báo lỗi cho mã {code}")
-                            if code not in failed_codes:
-                                failed_codes.append(code)
-                            btn.click(force=True)
-                            page.wait_for_timeout(300)
+                    for dlg in page.locator("nb-dialog-container, .cdk-overlay-pane").all():
+                        if not dlg.is_visible():
+                            continue
+                        dlg_text = dlg.inner_text().strip()
+                        # Bỏ qua popup thành công (không có từ khoá lỗi).
+                        low = dlg_text.lower()
+                        if any(k in low for k in ["tồn tại", "trùng", "đã có", "không hợp lệ",
+                                                    "không tìm thấy", "đã lấy hàng",
+                                                    "đã bàn giao", "lỗi", "không thể"]):
+                            # Rút gọn lý do: lấy dòng đầu tiên không rỗng, bỏ chữ "Thông báo" đầu.
+                            reason = _extract_error_reason(dlg_text)
+                            print(f"[scan-import] Mã {code} LỖI: {reason}")
+                            _mark_failed(code, reason)
+                            # Bấm OK để đóng popup
+                            for btn in dlg.locator("button:has-text('OK'), button:has-text('ĐỒNG Ý'), button:has-text('Đóng')").all():
+                                if btn.is_visible():
+                                    btn.click(force=True)
+                                    page.wait_for_timeout(300)
+                                    break
                 except Exception:
                     pass
 
@@ -125,13 +147,17 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                 rows = page.locator("tbody tr").all()
                 for row in rows:
                     if not row.is_visible(): continue
-                    txt = row.inner_text().lower()
+                    txt_raw = row.inner_text()
+                    txt = txt_raw.lower()
                     # Nhận diện lỗi: trùng, tồn tại, đã lấy hàng, lỗi, đã bàn giao, khác...
-                    if any(k in txt for k in ["trùng", "tồn tại", "đã lấy hàng", "lỗi", "đã bàn giao", "khác", "không hợp lệ"]):
-                        # Ghi nhận mã bị lỗi bằng cách quét xem mã nào có trong text của dòng này
+                    KEYS = ["trùng", "tồn tại", "đã lấy hàng", "lỗi", "đã bàn giao", "khác", "không hợp lệ"]
+                    if any(k in txt for k in KEYS):
+                        # Trích lý do từ chính row (thường có badge/label ngắn gọn).
+                        reason = _extract_error_reason(txt_raw)
                         for code in codes:
-                            if code.strip().lower() in txt and code.strip() not in failed_codes:
-                                failed_codes.append(code.strip())
+                            code_s = code.strip()
+                            if code_s.lower() in txt:
+                                _mark_failed(code_s, reason)
 
                         del_btn = row.locator("[icon='trash'], .nb-trash, i.fa-trash, button:has-text('Xóa'), button[title='Xóa']").first
                         if del_btn.is_visible():
@@ -220,18 +246,22 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                 # Đối chiếu mã xem mã nào bị OPS âm thầm gạch bỏ (silently dropped)
                 # Nếu mã không có trong text của trang View, chắc chắn nó đã bị loại!
                 for code in codes:
-                    if code not in info_text and code not in failed_codes:
-                        failed_codes.append(code.strip())
+                    code_s = code.strip()
+                    if code_s not in info_text:
+                        _mark_failed(code_s, "OPS âm thầm loại (không hiện trên phiên)")
             except Exception as e:
                 print(f"[scan_import] Không đọc được số lượng thực tế: {e}")
 
             _save_screenshot(page, "scan_complete")
             return {"ok": True, "error": "", "ops_session_id": ops_session_id,
-                    "codes_entered": actual_entered, "screenshot_file": "", "failed_codes": failed_codes}
+                    "codes_entered": actual_entered, "screenshot_file": "",
+                    "failed_codes": failed_codes, "failed_details": failed_details}
         except Exception as e:
             shot = _save_screenshot(page, "scan_error")
             return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:400]}",
-                    "screenshot_file": shot, "codes_entered": 0, "failed_codes": failed_codes if 'failed_codes' in locals() else []}
+                    "screenshot_file": shot, "codes_entered": 0,
+                    "failed_codes": failed_codes if 'failed_codes' in locals() else [],
+                    "failed_details": failed_details if 'failed_details' in locals() else []}
         finally:
             browser.close()
 
@@ -396,6 +426,21 @@ def _extract_session_id(page, retries=4) -> str:
         page.wait_for_timeout(1500)
         
     return ""
+
+
+def _extract_error_reason(raw_text: str) -> str:
+    """Rút gọn thông báo lỗi từ popup/row OPS về 1 dòng ngắn để lưu log."""
+    if not raw_text:
+        return "OPS loại"
+    # Tách dòng, bỏ các dòng noise ('Thông báo', 'OK', 'ĐỒNG Ý', trống).
+    NOISE = {"thông báo", "ok", "đóng", "đồng ý", "xác nhận"}
+    lines = [ln.strip() for ln in raw_text.split("\n") if ln.strip()]
+    for ln in lines:
+        if ln.lower() in NOISE:
+            continue
+        # Lấy dòng đầu tiên có nghĩa, cắt còn 200 ký tự.
+        return ln[:200]
+    return "OPS loại"
 
 
 def _save_screenshot(page, tag: str) -> str:

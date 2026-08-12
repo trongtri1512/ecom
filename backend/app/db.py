@@ -49,6 +49,17 @@ def _run_light_migrations():
             to_add.append("ALTER TABLE scans ADD COLUMN session_id VARCHAR(64) NOT NULL DEFAULT ''")
         if "basket_id" not in cols:
             to_add.append("ALTER TABLE scans ADD COLUMN basket_id INTEGER NULL")
+    # --- baskets: trạng thái bàn giao OPS + nhật ký lỗi ---
+    if "baskets" in tables:
+        cols = {c["name"] for c in inspector.get_columns("baskets")}
+        if "ops_status" not in cols:
+            to_add.append("ALTER TABLE baskets ADD COLUMN ops_status VARCHAR(16) NOT NULL DEFAULT ''")
+        if "ops_handed_at" not in cols:
+            to_add.append("ALTER TABLE baskets ADD COLUMN ops_handed_at TIMESTAMP NULL")
+        if "ops_sessions_json" not in cols:
+            to_add.append("ALTER TABLE baskets ADD COLUMN ops_sessions_json VARCHAR(2000) NOT NULL DEFAULT '{}'")
+        if "ops_errors_json" not in cols:
+            to_add.append("ALTER TABLE baskets ADD COLUMN ops_errors_json VARCHAR(8000) NOT NULL DEFAULT '[]'")
     # --- carrier_rules (cấu hình auto import theo hãng) ---
     if "carrier_rules" in tables:
         cols = {c["name"] for c in inspector.get_columns("carrier_rules")}

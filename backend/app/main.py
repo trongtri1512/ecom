@@ -734,44 +734,89 @@ def ops_import_basket(
     for s in scans:
         by_carrier.setdefault(s.carrier, []).append(s)
         
+    import json as _json_bh
     results = []
+    # Gộp mã phiên + lỗi từ tất cả carrier vào basket
+    basket_sessions: dict = {}
+    basket_errors: list = []
+    ok_count = 0
+    total_processed = 0
     for carrier, carrier_scans in by_carrier.items():
         cfg = _get_ops_config_for_carrier(db, carrier)
         if not cfg:
+            basket_errors.append({"code": "-", "carrier": carrier,
+                                   "reason": "Chưa cấu hình đối tác OPS"})
             results.append({"carrier": carrier, "error": "Chưa cấu hình đối tác OPS"})
             continue
-            
+
         template_id = cfg["template_id"]
         partner = cfg["partner"]
         codes = [s.code for s in carrier_scans]
+        total_processed += len(codes)
         stamp = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{carrier}"
-        
+
         result = ops_uploader.scan_import(carrier, codes, template_id, partner, stamp)
         if result.get("ok"):
             session_id = result.get("ops_session_id") or stamp
             failed_codes = result.get("failed_codes", [])
+            failed_details = result.get("failed_details", [])
             successful_codes = [c for c in codes if c not in failed_codes]
             entered = len(successful_codes)
-            
+            ok_count += entered
+
             for r in carrier_scans:
                 if r.code in successful_codes:
                     r.session_id = session_id
-                    
-            if failed_codes:
-                db.execute(delete(Scan).where(Scan.code.in_(failed_codes)))
-                
+
+            # KHÔNG xóa mã lỗi khỏi DB nữa — chỉ ghi log để cuối ngày kiểm.
+            # (Bỏ dòng delete(Scan).where(...) trước đây để giữ dữ liệu debug.)
+
+            basket_sessions[carrier] = session_id
+            for fd in failed_details:
+                basket_errors.append({"code": fd.get("code", "-"), "carrier": carrier,
+                                       "reason": fd.get("reason", "OPS loại")})
+
             db.commit()
-            _log_ops(db, "success", "import_basket", carrier, entered, session_id, f"Bàn giao thủ công sọt {basket.seq}.", "")
+            note = f"Bàn giao sọt {basket.seq}: {entered}/{len(codes)} mã OK, {len(failed_codes)} mã lỗi."
+            _log_ops(db, "success", "import_basket", carrier, entered, session_id, note, "")
             events.publish("auto_import", {"carrier": carrier, "count": entered, "session_id": session_id})
-            results.append({"carrier": carrier, "status": "ok", "count": entered, "session_id": session_id})
+            results.append({"carrier": carrier, "status": "ok", "count": entered,
+                            "session_id": session_id, "failed": len(failed_codes)})
         else:
             err = result.get("error", "")
             shot = result.get("screenshot_file", "")
+            basket_errors.append({"code": "-", "carrier": carrier, "reason": err[:200]})
             _log_ops(db, "error", "import_basket", carrier, len(codes), "", err, shot)
             events.publish("auto_import_error", {"carrier": carrier, "error": err})
             results.append({"carrier": carrier, "error": err})
 
-    return {"status": "done", "results": results}
+    # Cập nhật trạng thái + nhật ký lên chính Basket.
+    if ok_count == total_processed and ok_count > 0:
+        basket.ops_status = "done"
+    elif ok_count > 0:
+        basket.ops_status = "partial"
+    else:
+        basket.ops_status = "failed"
+    basket.ops_handed_at = datetime.now(timezone.utc)
+    # Gộp thêm với dữ liệu cũ (trường hợp bấm Bàn giao lại — thêm lỗi mới nữa).
+    try:
+        old_sess = _json_bh.loads(basket.ops_sessions_json or "{}")
+    except Exception:
+        old_sess = {}
+    old_sess.update(basket_sessions)
+    basket.ops_sessions_json = _json_bh.dumps(old_sess, ensure_ascii=False)
+    try:
+        old_err = _json_bh.loads(basket.ops_errors_json or "[]")
+    except Exception:
+        old_err = []
+    basket.ops_errors_json = _json_bh.dumps(old_err + basket_errors, ensure_ascii=False)[:8000]
+    db.commit()
+    events.publish("basket_close", basket.as_dict())  # frontend refresh
+
+    return {"status": "done", "results": results,
+            "ops_status": basket.ops_status,
+            "ops_sessions": basket_sessions,
+            "failed_count": len(basket_errors)}
 
 # ----------------------------- Đồng bộ ngược thủ công -----------------------------
 @app.post("/api/ops/sync-manual")
