@@ -149,28 +149,41 @@ def beep(kind: str):
 
 # ----------------------------- Hàng đợi offline -----------------------------
 class OfflineQueue:
-    """Lưu mã vào SQLite khi mất mạng, gửi lại khi có mạng — không mất mã."""
+    """Lưu mã vào SQLite khi mất mạng, gửi lại khi có mạng — không mất mã.
+
+    Từ 2026-08: thêm cột basket_seq để khi gửi lại vẫn đúng sọt agent đang quét
+    lúc lỡ mất mạng.
+    """
 
     def __init__(self, path):
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS pending ("
-            "id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, scanned_at TEXT)"
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, scanned_at TEXT, "
+            "basket_seq INTEGER NOT NULL DEFAULT 0)"
         )
+        # Migration nhẹ: thêm cột basket_seq nếu bản cũ chưa có.
+        try:
+            cols = [r[1] for r in self._conn.execute("PRAGMA table_info(pending)")]
+            if "basket_seq" not in cols:
+                self._conn.execute("ALTER TABLE pending ADD COLUMN basket_seq INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass
         self._conn.commit()
 
-    def add(self, code, scanned_at):
+    def add(self, code, scanned_at, basket_seq=0):
         with self._lock:
             self._conn.execute(
-                "INSERT INTO pending(code, scanned_at) VALUES (?, ?)", (code, scanned_at)
+                "INSERT INTO pending(code, scanned_at, basket_seq) VALUES (?, ?, ?)",
+                (code, scanned_at, int(basket_seq or 0))
             )
             self._conn.commit()
 
     def all(self):
         with self._lock:
             return self._conn.execute(
-                "SELECT id, code, scanned_at FROM pending ORDER BY id"
+                "SELECT id, code, scanned_at, basket_seq FROM pending ORDER BY id"
             ).fetchall()
 
     def remove(self, row_id):
@@ -191,17 +204,22 @@ class Sender:
         self.session = requests.Session()
         self.session.headers.update({"X-API-Key": cfg["api_key"]})
 
-    def _post(self, code, scanned_at):
+    def _post(self, code, scanned_at, basket_seq=None):
         """Trả 'ok' | 'ignored' | 'dup' | 'net' | 'err'.
 
         - ok      : mã mới, đã lưu (201).
         - ignored : quét lại trong <1 phút -> server bỏ qua êm (201, status ignored).
         - dup     : quét lại sau >1 phút -> mã TRÙNG (409) -> cảnh báo tại máy.
+
+        `basket_seq`: agent tự quản. Có -> server gán ngay basket_id cho mã này.
         """
+        payload = {"code": code, "scanned_at": scanned_at, "source_agent": self.cfg["name"]}
+        if basket_seq:
+            payload["basket_seq"] = int(basket_seq)
         try:
             r = self.session.post(
                 self.cfg["url"] + "/api/scans",
-                json={"code": code, "scanned_at": scanned_at, "source_agent": self.cfg["name"]},
+                json=payload,
                 timeout=8,
             )
         except requests.RequestException:
@@ -217,14 +235,26 @@ class Sender:
             return "dup"
         return "err"
 
-    def send(self, code):
-        """Gửi 1 mã. Nếu mất mạng -> đưa vào hàng đợi offline."""
+    def send(self, code, basket_seq=None):
+        """Gửi 1 mã kèm basket_seq. Nếu mất mạng -> đưa vào hàng đợi offline."""
         scanned_at = datetime.now(timezone.utc).isoformat()
-        result = self._post(code, scanned_at)
+        result = self._post(code, scanned_at, basket_seq=basket_seq)
         if result == "net":
-            self.oq.add(code, scanned_at)
+            # Lưu cả basket_seq để khi gửi lại vẫn đúng sọt.
+            self.oq.add(code, scanned_at, basket_seq=basket_seq or 0)
             print(f"[offline] Mất mạng, xếp hàng: {code} (chờ gửi lại)")
         return result
+
+    def get_next_basket_seq(self):
+        """Sync với server: sọt kế tiếp = sọt cuối +1 (mặc định 1)."""
+        try:
+            r = self.session.get(self.cfg["url"] + "/api/baskets/next",
+                                 params={"agent_name": self.cfg["name"]}, timeout=5)
+            if r.status_code == 200:
+                return int(r.json().get("current_seq", 1))
+        except requests.RequestException:
+            pass
+        return 1
 
     def get_summary_today(self):
         """Lấy thống kê HÔM NAY từ server (chỉ lấy order của các hãng)."""
@@ -279,11 +309,14 @@ class Sender:
             return {"status": "error", "error": str(e)}
         return None
 
-    def close_basket(self):
-        """Chốt 1 sọt cho máy này. Trả record sọt vừa tạo, hoặc None nếu lỗi."""
+    def close_basket(self, basket_seq=None):
+        """Chốt 1 sọt cho máy này. Nếu gửi basket_seq -> chốt đúng sọt đó (agent-side)."""
         try:
+            params = {"agent_name": self.cfg["name"]}
+            if basket_seq:
+                params["basket_seq"] = int(basket_seq)
             r = self.session.post(self.cfg["url"] + "/api/baskets/close",
-                                  params={"agent_name": self.cfg["name"]}, timeout=10)
+                                  params=params, timeout=10)
             if r.status_code == 200:
                 return r.json()
         except requests.RequestException:
@@ -307,12 +340,12 @@ class Sender:
         while True:
             time.sleep(5)
             rows = self.oq.all()
-            for row_id, code, scanned_at in rows:
-                res = self._post(code, scanned_at)
+            for row_id, code, scanned_at, basket_seq in rows:
+                res = self._post(code, scanned_at, basket_seq=basket_seq if basket_seq else None)
                 if res in ("ok", "ignored", "dup", "err"):
                     # mọi kết quả trừ 'net' đều coi là đã xử lý -> bỏ khỏi hàng đợi.
                     self.oq.remove(row_id)
-                    print(f"[flush] Gửi lại {code}: {res}")
+                    print(f"[flush] Gửi lại {code} (sọt {basket_seq}): {res}")
                 else:
                     break  # vẫn mất mạng -> để lần sau
 
@@ -455,6 +488,14 @@ class AgentWindow:
         self._sessions = {}           # by_carrier: {carrier: [{session_id,count,...}]}
         self._last_session_ids = set()  # để phát hiện phiên mới, hiện thông báo
         self._baskets = []            # danh sách sọt hôm nay của máy này
+        # Số sọt hiện tại (agent-side): mọi mã quét sẽ tự gán vào sọt này.
+        # Sync với server lúc khởi động (sọt cuối +1, fallback 1).
+        self.current_basket_seq = 1
+        try:
+            self.current_basket_seq = state["sender"].get_next_basket_seq()
+            print(f"[startup] Sync với server: sọt hiện tại = {self.current_basket_seq}")
+        except Exception as e:
+            print(f"[startup] Không sync được sọt (dùng seq=1): {e}")
 
         self.root = tk.Tk()
         self.root.title("Scan Ecom — Máy quét")
@@ -467,6 +508,12 @@ class AgentWindow:
         top.pack(fill="x")
         tk.Label(top, text="📦 Scan Ecom", fg="#e2e8f0", bg=self.PANEL,
                  font=("Segoe UI", 14, "bold")).pack(side="left", padx=12, pady=10)
+        # Label nổi bật: đang quét vào sọt số mấy
+        self.current_basket_lbl = tk.Label(
+            top, text=f"🟢 Đang quét vào Sọt {self.current_basket_seq}",
+            fg="#4ade80", bg=self.PANEL, font=("Segoe UI", 12, "bold"))
+        self.current_basket_lbl.pack(side="left", padx=20)
+
         self.status_lbl = tk.Label(top, text="● Đang kết nối…", fg="#94a3b8", bg=self.PANEL,
                                    font=("Segoe UI", 10))
         self.status_lbl.pack(side="right", padx=12)
@@ -810,22 +857,27 @@ class AgentWindow:
 
     # --- Sọt ---
     def _close_basket(self):
-        """Bấm nút Hoàn thành sọt: gọi API server, thông báo kết quả."""
+        """Bấm nút Hoàn thành sọt: chốt sọt hiện tại, TĂNG seq cho sọt kế tiếp."""
+        closing_seq = self.current_basket_seq
         def do():
-            result = self.state["sender"].close_basket()
+            result = self.state["sender"].close_basket(basket_seq=closing_seq)
             if result is None:
-                # về main thread để cảnh báo (đơn giản: log vào listbox)
                 self.root.after(0, lambda: self.listbox.insert(0,
                     f"{time.strftime('%H:%M:%S')}  ✖ Lỗi     Không chốt được sọt (mất mạng?)"))
                 self.root.after(0, lambda: self.listbox.itemconfig(0, fg="#ef4444"))
                 return
-            name = result.get("name", "Sọt ?")
+            name = result.get("name", f"Sọt {closing_seq}")
             total = result.get("total", 0)
             by = result.get("by_carrier", {})
             detail = " | ".join(f"{k}:{v}" for k, v in by.items()) or "(rỗng)"
             self.root.after(0, lambda: self.listbox.insert(0,
                 f"{time.strftime('%H:%M:%S')}  ✅ Chốt {name}  Total {total} — {detail}"))
             self.root.after(0, lambda: self.listbox.itemconfig(0, fg="#22c55e"))
+            # TĂNG seq cho sọt kế tiếp + cập nhật label header
+            self.current_basket_seq = closing_seq + 1
+            new_seq = self.current_basket_seq
+            self.root.after(0, lambda: self.current_basket_lbl.config(
+                text=f"🟢 Đang quét vào Sọt {new_seq}"))
             self.root.after(0, self._pull_all)  # cập nhật danh sách sọt ngay
         threading.Thread(target=do, daemon=True).start()
 
@@ -986,7 +1038,10 @@ def main():
     ui_events = _queue.Queue()
 
     def handle_code(code):
-        result = sender.send(code)
+        # Lấy sọt hiện tại từ window (nếu có) — gửi kèm để server gán basket_id ngay.
+        win = state.get("window")
+        seq = win.current_basket_seq if win else None
+        result = sender.send(code, basket_seq=seq)
         if result == "ok":
             print(f"[ok] {code}")
             if cfg["beep"]:

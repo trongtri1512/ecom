@@ -127,11 +127,21 @@ def create_scan(
     if existing:
         return _handle_existing(existing, code, payload, background, db)
 
+    # Nếu agent gửi basket_seq -> tìm/tạo Basket rỗng và gán basket_id ngay.
+    # Cách này ĐÁNG TIN CẬY hơn cách cũ (chỉ gán khi bấm 'Hoàn thành sọt') vì
+    # không phụ thuộc timing và không lẫn giữa nhiều agent song song.
+    basket_id_to_set = None
+    if payload.basket_seq and payload.source_agent:
+        basket_id_to_set = _ensure_basket_for_agent(
+            db, payload.source_agent, int(payload.basket_seq)
+        )
+
     scan = Scan(
         code=code,
         carrier=carrier,
         scanned_at=payload.scanned_at or datetime.now(timezone.utc),
         source_agent=payload.source_agent,
+        basket_id=basket_id_to_set,
     )
     db.add(scan)
     try:
@@ -979,54 +989,125 @@ def list_sessions(
 
 
 # ----------------------------- Sọt (basket) -----------------------------
+def _ensure_basket_for_agent(db: Session, agent_name: str, seq: int) -> int:
+    """Tìm hoặc TẠO Basket (agent, seq, ngày hôm nay). Trả về basket.id.
+
+    Dùng cho luồng agent-side basket: agent tự quản seq, mã đầu tiên có seq=N
+    -> tạo sọt N nếu chưa có; các mã sau cùng seq -> gán vào sọt N đó.
+    """
+    frm, _ = period_range("day")
+    b = db.scalar(
+        select(Basket).where(
+            Basket.source_agent == agent_name,
+            Basket.seq == int(seq),
+            Basket.closed_at >= frm,
+        ).limit(1)
+    )
+    if b:
+        return b.id
+    now = datetime.now(timezone.utc)
+    b = Basket(seq=int(seq), source_agent=agent_name,
+               started_at=now, closed_at=now, total=0, by_carrier_json="{}")
+    db.add(b)
+    db.flush()
+    return b.id
+
+
+@app.get("/api/baskets/next")
+def next_basket_seq(agent_name: str = Query(...), db: Session = Depends(get_db)):
+    """Trả số sọt kế tiếp cho agent (dùng lúc khởi động để sync).
+
+    Nếu hôm nay chưa có sọt nào -> next=1. Nếu sọt cuối là N -> next=N+1.
+    Agent lưu vào biến local, mỗi lần POST /api/scans sẽ gửi kèm giá trị này.
+    """
+    frm, _ = period_range("day")
+    last = db.scalar(
+        select(Basket).where(
+            Basket.source_agent == agent_name,
+            Basket.closed_at >= frm,
+        ).order_by(Basket.seq.desc()).limit(1)
+    )
+    next_seq = (last.seq + 1) if last else 1
+    return {"agent_name": agent_name, "current_seq": next_seq}
+
+
 @app.post("/api/baskets/close")
 def close_basket(
     agent_name: str = Query(..., description="tên máy quét (trùng source_agent)"),
+    basket_seq: int | None = Query(default=None, description="seq agent tự quản (tuỳ chọn)"),
     db: Session = Depends(get_db),
 ):
-    """Chốt 1 sọt: gom các mã QUÉT BỞI máy này từ sau sọt trước tới now.
+    """Chốt 1 sọt cho agent. Có 2 chế độ:
 
-    Nếu chưa có sọt nào hôm nay -> lấy từ 00:00 hôm nay. Trả record sọt mới.
+    A) Có basket_seq (LUỒNG MỚI — agent-side basket):
+       Sọt đã được tạo/gán từ trước khi agent POST /scans với basket_seq này.
+       Chỉ cần: tính lại total/by_carrier từ mã có basket_id = sọt đó, cập nhật
+       closed_at = now. Trả record sọt.
+
+    B) Không có basket_seq (LUỒNG CŨ — backward compat):
+       Tìm sọt cuối cùng + gán mã trong khoảng thời gian như trước.
     """
     import json
     now = datetime.now(timezone.utc)
     frm, _ = period_range("day")
-    # Tìm sọt CUỐI CÙNG hôm nay của agent này để lấy mốc bắt đầu.
-    last_basket = db.scalar(
-        select(Basket).where(Basket.source_agent == agent_name)
-        .where(Basket.closed_at >= frm)
-        .order_by(Basket.seq.desc()).limit(1)
-    )
-    started_at = last_basket.closed_at if last_basket else frm
-    next_seq = (last_basket.seq + 1) if last_basket else 1
 
-    # Lấy TẤT CẢ mã quét bởi agent này trong khoảng (started_at, now] CHƯA thuộc sọt.
-    # Basket phải CHỨA đúng danh sách mã trong sọt để sau này bàn giao đúng bộ.
-    scans_in_basket = db.scalars(
-        select(Scan).where(
-            Scan.source_agent == agent_name,
-            Scan.scanned_at > started_at,
-            Scan.scanned_at <= now,
-            Scan.basket_id.is_(None),  # chưa thuộc sọt nào
+    if basket_seq is not None:
+        # ---- Luồng A: agent-side ----
+        basket = db.scalar(
+            select(Basket).where(
+                Basket.source_agent == agent_name,
+                Basket.seq == int(basket_seq),
+                Basket.closed_at >= frm,
+            ).limit(1)
         )
-    ).all()
-    by_carrier: dict = {}
-    for s in scans_in_basket:
-        by_carrier[s.carrier] = by_carrier.get(s.carrier, 0) + 1
-    total = len(scans_in_basket)
+        if not basket:
+            # Sọt seq này chưa có mã nào (agent bấm chốt trước khi quét mã nào).
+            # Tạo record rỗng cho nhất quán.
+            basket = Basket(seq=int(basket_seq), source_agent=agent_name,
+                             started_at=now, closed_at=now, total=0, by_carrier_json="{}")
+            db.add(basket)
+            db.flush()
+        # Tính lại total + by_carrier từ mã đã gán basket_id.
+        scans = db.scalars(select(Scan).where(Scan.basket_id == basket.id)).all()
+        by_carrier: dict = {}
+        for s in scans:
+            by_carrier[s.carrier] = by_carrier.get(s.carrier, 0) + 1
+        basket.total = len(scans)
+        basket.by_carrier_json = json.dumps(by_carrier, ensure_ascii=False)
+        basket.closed_at = now
+        db.commit()
+        db.refresh(basket)
+    else:
+        # ---- Luồng B: server-side cũ ----
+        last_basket = db.scalar(
+            select(Basket).where(Basket.source_agent == agent_name)
+            .where(Basket.closed_at >= frm)
+            .order_by(Basket.seq.desc()).limit(1)
+        )
+        started_at = last_basket.closed_at if last_basket else frm
+        next_seq = (last_basket.seq + 1) if last_basket else 1
+        scans_in_basket = db.scalars(
+            select(Scan).where(
+                Scan.source_agent == agent_name,
+                Scan.scanned_at > started_at,
+                Scan.scanned_at <= now,
+                Scan.basket_id.is_(None),
+            )
+        ).all()
+        by_carrier = {}
+        for s in scans_in_basket:
+            by_carrier[s.carrier] = by_carrier.get(s.carrier, 0) + 1
+        total = len(scans_in_basket)
+        basket = Basket(seq=next_seq, source_agent=agent_name,
+                        started_at=started_at, closed_at=now,
+                        total=total, by_carrier_json=json.dumps(by_carrier, ensure_ascii=False))
+        db.add(basket)
+        db.flush()
+        for s in scans_in_basket:
+            s.basket_id = basket.id
+        db.commit()
+        db.refresh(basket)
 
-    basket = Basket(
-        seq=next_seq, source_agent=agent_name,
-        started_at=started_at, closed_at=now,
-        total=total, by_carrier_json=json.dumps(by_carrier, ensure_ascii=False),
-    )
-    db.add(basket)
-    db.flush()  # để có basket.id trước khi gán vào Scan
-    # Gán basket_id cho từng mã -> truy vấn "sọt X gồm mã nào" là SELECT WHERE basket_id=X.
-    for s in scans_in_basket:
-        s.basket_id = basket.id
-    db.commit()
-    db.refresh(basket)
     events.publish("basket_close", basket.as_dict())
 
     # Kích hoạt chạy nền đồng bộ lên OPS tuần tự ngay lập tức

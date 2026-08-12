@@ -6,10 +6,15 @@ from pydantic import BaseModel, Field
 
 
 class ScanIn(BaseModel):
-    """Payload agent gửi lên khi quét được 1 mã."""
+    """Payload agent gửi lên khi quét được 1 mã.
+
+    `basket_seq` (mới): agent tự quản số sọt hiện tại và gửi kèm để backend
+    gán ngay basket_id cho mã, không cần đợi user bấm 'Hoàn thành sọt'.
+    """
     code: str = Field(..., min_length=1, max_length=128)
     scanned_at: Optional[datetime] = None
     source_agent: Optional[str] = None
+    basket_seq: Optional[int] = None  # số thứ tự sọt trong ngày của agent
 
 
 class ScanUpdate(BaseModel):
