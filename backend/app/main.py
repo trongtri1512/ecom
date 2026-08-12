@@ -1035,6 +1035,49 @@ def list_baskets(
     return {"items": [r.as_dict() for r in rows]}
 
 
+@app.post("/api/baskets/backfill")
+def backfill_basket_ids(db: Session = Depends(get_db)):
+    """Gán basket_id cho tất cả mã của các sọt CŨ (chưa có basket_id).
+
+    Dùng cho các sọt tạo TRƯỚC khi có cột basket_id (migration). Duyệt từng sọt
+    theo THỨ TỰ THỜI GIAN (seq tăng dần trong từng agent), chỉ gán các mã đang
+    có basket_id=NULL và nằm trong khoảng (started_at, closed_at] của sọt.
+
+    Cách này an toàn kể cả khi các sọt liền kề nhau: sọt N chỉ nhận mã
+    scanned_at > started_at_N (= closed_at của sọt N-1).
+    """
+    total_updated = 0
+    per_basket: list = []
+    baskets = db.scalars(select(Basket).order_by(Basket.source_agent, Basket.seq)).all()
+    for b in baskets:
+        # Kiểm nhanh xem sọt này đã có mã nào gán basket_id chưa (bỏ qua nếu đã đầy).
+        has_any = db.scalar(
+            select(func.count()).select_from(Scan).where(Scan.basket_id == b.id)
+        )
+        if has_any and has_any > 0:
+            per_basket.append({"basket_id": b.id, "seq": b.seq,
+                               "agent": b.source_agent, "assigned": 0,
+                               "note": "đã có basket_id"})
+            continue
+        # Tìm mã của agent trong khoảng thời gian sọt, chưa gán basket_id.
+        rows = db.scalars(
+            select(Scan).where(
+                Scan.source_agent == b.source_agent,
+                Scan.scanned_at > b.started_at,
+                Scan.scanned_at <= b.closed_at,
+                Scan.basket_id.is_(None),
+            )
+        ).all()
+        for s in rows:
+            s.basket_id = b.id
+        n = len(rows)
+        total_updated += n
+        per_basket.append({"basket_id": b.id, "seq": b.seq,
+                           "agent": b.source_agent, "assigned": n})
+    db.commit()
+    return {"total_updated": total_updated, "baskets": per_basket}
+
+
 @app.post("/api/track/run")
 def track_run(background: BackgroundTasks):
     """Tra trạng thái lấy hàng cho các mã hôm nay chưa xác định (chạy nền)."""

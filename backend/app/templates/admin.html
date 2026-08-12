@@ -363,7 +363,10 @@
       <div class="card">
         <div class="card-head">
           <h3>Các sọt hôm nay</h3>
-          <button id="btnRefreshBaskets" class="btn btn-ghost">↻ Làm mới</button>
+          <div class="flex-row">
+            <button id="btnBackfillBaskets" class="btn btn-ghost" title="Gán basket_id cho các sọt cũ (tạo trước khi có migration). Chỉ cần chạy 1 lần.">🔧 Gán lại basket_id (sọt cũ)</button>
+            <button id="btnRefreshBaskets" class="btn btn-ghost">↻ Làm mới</button>
+          </div>
         </div>
         <div class="card-body no-pad" style="overflow-x:auto;">
           <table class="compact-table" style="width:100%;min-width:900px;">
@@ -691,6 +694,25 @@
     }
   }
   $("#btnRefreshBaskets").addEventListener("click", loadBaskets);
+  $("#btnBackfillBaskets").addEventListener("click", async () => {
+    if (!confirm("Gán basket_id cho tất cả sọt CŨ (tạo trước khi có migration)?\nChỉ cần chạy 1 lần. Không ảnh hưởng dữ liệu đã có.")) return;
+    const btn = $("#btnBackfillBaskets");
+    const old = btn.innerHTML;
+    btn.innerHTML = "⏳ Đang gán..."; btn.disabled = true;
+    try {
+      const r = await api("/api/baskets/backfill", { method: "POST" });
+      const detail = (r.baskets || [])
+        .filter(b => b.assigned > 0)
+        .map(b => `Sọt ${b.seq} (${b.agent}): ${b.assigned} mã`)
+        .join("\n") || "(không có sọt nào cần backfill)";
+      alert(`✅ Đã gán ${r.total_updated} mã vào ${r.baskets.length} sọt.\n\nChi tiết:\n${detail}`);
+      loadBaskets();
+    } catch (e) {
+      toast("Lỗi backfill", String(e), "danger");
+    } finally {
+      btn.innerHTML = old; btn.disabled = false;
+    }
+  });
   $("#basketRows").addEventListener("click", async (e) => {
     const btn = e.target.closest(".btn-post-basket");
     if (!btn) return;
