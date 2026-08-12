@@ -525,8 +525,8 @@ def _force_auto_import_all():
         return
     db = SessionLocal()
     try:
-        # Lấy danh sách các ĐVVC có mã đã lấy hàng (picked) nhưng chưa import
-        stmt = select(Scan.carrier).where(Scan.session_id == "", Scan.pickup_status == "picked").group_by(Scan.carrier)
+        # Lấy danh sách các ĐVVC có mã chưa import (không bắt buộc trạng thái picked)
+        stmt = select(Scan.carrier).where(Scan.session_id == "").group_by(Scan.carrier)
         carriers = db.scalars(stmt).all()
         
         for carrier in carriers:
@@ -538,7 +538,7 @@ def _force_auto_import_all():
             template_id = cfg["template_id"]
             partner = cfg["partner"]
             
-            scans = db.scalars(select(Scan).where(Scan.carrier == carrier, Scan.session_id == "", Scan.pickup_status == "picked").order_by(Scan.scanned_at.asc())).all()
+            scans = db.scalars(select(Scan).where(Scan.carrier == carrier, Scan.session_id == "").order_by(Scan.scanned_at.asc())).all()
             if not scans:
                 continue
                 
