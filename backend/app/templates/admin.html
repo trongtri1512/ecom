@@ -95,6 +95,29 @@
     </div>
   </section>
 
+  <section style="padding: 0 20px 40px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+      <h3 style="margin:0;">Các sọt (Baskets) gần đây</h3>
+      <button id="btnRefreshBaskets" class="btn btn-ghost">↻ Làm mới</button>
+    </div>
+    <div class="tablewrap" style="padding:0;">
+      <table style="min-width:900px;">
+        <thead>
+          <tr>
+            <th>Thời gian chốt</th>
+            <th>Máy quét (Agent)</th>
+            <th>Tên sọt</th>
+            <th>Tổng số</th>
+            <th>Chi tiết ĐVVC</th>
+            <th>Thao tác</th>
+          </tr>
+        </thead>
+        <tbody id="basketRows"></tbody>
+      </table>
+    </div>
+    <div id="basketEmpty" class="empty" hidden>Chưa có sọt nào hôm nay.</div>
+  </section>
+
   <section style="padding: 20px;">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
       <h3 style="margin:0;">Log OPS (mới nhất trước)</h3>
@@ -313,11 +336,82 @@
         $("#syncSessionId").value = "";
         $("#syncCodes").value = "";
         loadLogs();
+  loadBaskets();
       } else {
         toast("Lỗi", res.message, "danger");
       }
     } catch (e) {
       toast("Lỗi", String(e), "danger");
+    } finally {
+      btn.innerHTML = oldText;
+      btn.disabled = false;
+    }
+  });
+
+  /* ------------------------- Quản lý sọt (Baskets) ------------------------- */
+  async function loadBaskets() {
+    try {
+      const data = await api("/api/baskets?period=day");
+      const items = data.items || [];
+      $("#basketEmpty").hidden = items.length > 0;
+      
+      let html = "";
+      for (const b of items) {
+        const dt = new Date(b.closed_at).toLocaleString("vi-VN", {hour12: false});
+        const byCarrier = b.by_carrier || {};
+        const details = Object.entries(byCarrier).filter(x => x[1] > 0).map(x => `${x[0]}: ${x[1]}`).join(" | ") || "(rỗng)";
+        
+        html += `
+          <tr>
+            <td style="font-family:Consolas,monospace;font-size:12px;">${dt}</td>
+            <td><b>${esc(b.source_agent)}</b></td>
+            <td>${esc(b.name)}</td>
+            <td style="font-weight:bold;color:#4ade80;">${b.total}</td>
+            <td style="font-family:Consolas,monospace;font-size:12px;color:var(--muted);">${esc(details)}</td>
+            <td>
+              <button class="btn btn-primary btn-post-basket" data-id="${b.id}" style="padding:4px 10px;font-size:12px;">📤 Bàn giao OPS</button>
+            </td>
+          </tr>
+        `;
+      }
+      $("#basketRows").innerHTML = html;
+    } catch (e) {
+      toast("Không tải được ds sọt", String(e), "danger");
+    }
+  }
+
+  $("#btnRefreshBaskets").addEventListener("click", loadBaskets);
+
+  $("#basketRows").addEventListener("click", async (e) => {
+    const btn = e.target.closest(".btn-post-basket");
+    if (!btn) return;
+    
+    const id = btn.dataset.id;
+    if (!confirm(`Xác nhận đẩy lại dữ liệu của sọt này lên hệ thống OPS?`)) return;
+    
+    const oldText = btn.innerHTML;
+    btn.innerHTML = "⏳ Đang đẩy...";
+    btn.disabled = true;
+    
+    try {
+      const res = await api(`/api/ops/import-basket?basket_id=${id}`, { method: "POST" });
+      if (res.status === "done") {
+        let msg = "";
+        for (const r of (res.results || [])) {
+           if (r.status === "ok") msg += `✅ ${r.carrier}: Xong ${r.count} mã.\n`;
+           else msg += `❌ ${r.carrier}: ${r.error}\n`;
+        }
+        if (!msg) msg = "Không có mã nào cần đẩy (Sọt rỗng hoặc đã đẩy xong trước đó).";
+        alert(`KẾT QUẢ ĐẨY SỌT:\n\n${msg}`);
+        loadLogs();
+  loadBaskets(); // Cập nhật lại log OPS sau khi đẩy
+      } else if (res.status === "empty") {
+        alert(res.message);
+      } else {
+        toast("Lỗi", res.message || "Lỗi không xác định", "danger");
+      }
+    } catch (err) {
+      toast("Lỗi", String(err), "danger");
     } finally {
       btn.innerHTML = oldText;
       btn.disabled = false;
@@ -370,6 +464,7 @@
       await api("/api/ops/logs", { method: "DELETE" });
       toast("Đã xoá", "Tất cả log OPS", "warn");
       loadLogs();
+  loadBaskets();
     } catch (e) { toast("Lỗi", String(e), "danger"); }
   });
 
@@ -381,6 +476,7 @@
       const res = await api(`/api/sessions/carrier/${encodeURIComponent(c)}`, { method: "DELETE" });
       toast("Thành công", res.message, "ok");
       loadLogs();
+  loadBaskets();
     } catch (e) { toast("Lỗi", String(e), "danger"); }
   });
 
@@ -421,6 +517,7 @@
 
   load().catch((e) => toast("Không tải được", String(e), "danger"));
   loadLogs();
+  loadBaskets();
   </script>
 </body>
 </html>
