@@ -97,13 +97,39 @@ launchctl load ~/Library/LaunchAgents/com.imv.scanecom.plist
 
 ## 4. Cửa sổ giao diện
 Khi chạy (nếu `show_window = true`), agent mở cửa sổ chia 2 phần:
-- **Bên trái (~1/3): Mã vừa quét** — danh sách realtime, tô màu: 🟢 đã thêm ·
-  🟡 quét lại <1p · 🔴 trùng.
-- **Bên phải (~2/3): Số lượng theo ĐVVC HÔM NAY** — thẻ Tổng nổi bật + từng ĐVVC
-  (SPX/J&T/Best/GHN…). Số liệu lấy từ **server** nên gồm **tất cả mã trong ngày**
-  (kể cả máy khác quét), **tự làm mới mỗi 5 giây** và ngay sau mỗi lần quét.
-- Nút: ⏸ Tạm dừng · 🌐 Web quản lý · Ẩn xuống khay.
-- Bấm **X = thu nhỏ xuống khay** (agent vẫn chạy ngầm), mở lại bằng nhấp đúp icon khay.
+
+**Bên trái (~1/3): Mã vừa quét** — danh sách realtime, tô màu:
+- 🟢 xanh = đã thêm thành công
+- 🟡 vàng = quét lại trong <1 phút (bỏ qua êm)
+- 🔴 đỏ = trùng (quá 60s), đã bị chặn
+- 🔵 xanh dương = phiên OPS mới được tạo
+
+**Bên phải (~2/3):**
+- **Thẻ Tổng đơn hôm nay** (nổi bật, số to)
+- **Số lượng theo từng ĐVVC** (SPX/J&T/Best/GHN…) có logo
+- **Nút "✅ Hoàn thành sọt"** — bấm khi đóng gói xong 1 thùng/sọt
+- **Danh sách các sọt hôm nay** (máy này): Sọt 1 · Sọt 2 · … · Tổng · Chi tiết ĐVVC
+- **Các mã phiên OPS** đã tạo (SPXCCE…, JTE…) khi auto import chạy
+
+**Số liệu lấy từ server** nên gồm cả mã của máy khác, **tự làm mới mỗi 5 giây** và
+ngay sau mỗi lần quét/chốt sọt.
+
+**Nút phía dưới:**
+- ⏸ Tạm dừng bắt mã (khi cần dùng bàn phím bình thường)
+- 🌐 Mở web quản lý
+- Ẩn xuống khay
+
+Bấm **X = thu nhỏ xuống khay** (agent vẫn chạy ngầm), mở lại bằng nhấp đúp icon khay.
+
+### Luồng nghiệp vụ chuẩn với sọt
+```
+1. Quét mã 1 → mã 2 → mã 3 → ... vào sọt vật lý (thùng/cần xé)
+2. Đóng nắp sọt xong → bấm "✅ Hoàn thành sọt" trên cửa sổ agent
+3. Sọt được chốt: server gán basket_id cho tất cả mã trong sọt
+4. Danh sách sọt bên phải cập nhật ngay (Sọt 1 · Tổng: 47 · SPX:20 J&T:15 GHN:12)
+5. Tiếp tục quét mã cho sọt kế tiếp
+6. Admin vào /admin → tab Sọt → bấm "📤 Bàn giao OPS" khi cần đẩy sọt lên hệ thống
+```
 
 ## 5. Icon khay hệ thống
 - **Mở cửa sổ** (nhấp đúp icon).

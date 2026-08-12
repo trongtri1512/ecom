@@ -1,149 +1,204 @@
 # Scan Ecom — Hệ thống quét mã vận đơn cho vận hành Ecom
 
-Quét mã vận đơn từ nhãn bằng **máy quét 2D**, tự động tổng hợp và phân loại theo
-**đơn vị vận chuyển (ĐVVC)**, chống trùng, xuất Excel — xem online realtime.
+Quét mã vận đơn từ nhãn bằng **máy quét 2D**, gộp mã theo **sọt vật lý** (thùng/cần
+xé), tự động **bàn giao lên imv.ops** khi đủ điều kiện, xem online realtime.
 
 ## Kiến trúc
 
 ```
-[Máy quét 2D] → gõ như bàn phím → [Scanner Agent (chạy ngầm)]
-                                        │ POST /api/scans (X-API-Key)
-                                        ▼
-                          [Backend FastAPI + PostgreSQL]  ──(SSE realtime)──▶  [Web App]
+[Máy quét 2D] --gõ như bàn phím--> [Agent Windows (chạy ngầm)]
+                                          │  POST /api/scans (X-API-Key)
+                                          ▼
+                       [Backend FastAPI + PostgreSQL]
+                          │           │              │
+                          │           │              └─> [Playwright + Chromium]
+                          │           │                   tự upload lên imv.ops
+                          │           ▼
+                          │      [Web UI /]     [Admin /admin]
+                          │      quản lý mã     cấu hình + log
+                          ▼
+                    [SSE realtime -> web & agent]
 ```
 
-- **`agent/`** — Scanner Agent chạy trên máy có máy quét. Bắt mã **toàn cục**
-  (không cần focus ô nhập), đẩy lên server. Xem [agent/README.md](agent/README.md).
-- **`backend/`** — API + phục vụ luôn web tĩnh. Vào Docker.
-- **`web/`** — giao diện quản lý (KPI, bảng, tìm/sửa/xoá, xuất Excel, realtime).
+3 thành phần chính, cùng repo:
 
-## Tính năng
-- ✅ Tự nhận diện ĐVVC theo prefix mã (SPX, GHN, J&T, Best, GHTK, Viettel Post,
-  Ninja Van…); mã lạ → **Other**. Sửa luật **ngay trên web** (nút ⚙️ Quản lý ĐVVC).
-- ✅ Tổng hợp **Total** + phân chia theo ĐVVC (thẻ KPI realtime).
+- **`agent/`** — Scanner Agent .exe trên máy Windows có máy quét. Bắt mã **toàn cục**
+  (không cần focus ô nhập), có cửa sổ giao diện, gộp sọt, hàng đợi offline. Xem
+  [agent/README.md](agent/README.md).
+- **`backend/`** — FastAPI + Postgres + Playwright + phục vụ luôn web tĩnh. Đóng
+  Docker.
+- **`web/`** — Trang quản lý chính `/` (bảng mã + KPI + sọt) và Admin `/admin`
+  (tab ngang: ĐVVC, Test post OPS, Đồng bộ ngược, Sọt, Log OPS).
+
+## Tính năng chính
+
+### Quản lý mã vận đơn
+- ✅ Tự nhận diện **ĐVVC theo prefix** (SPX/J&T/Best/GHN/GHTK/Viettel Post/Ninja Van).
+  1 hãng có thể có **nhiều prefix**. Sửa ngay trên trang Admin, không cần code.
+- ✅ **KPI 1 hàng ngang gọn** — chỉ hiện ĐVVC có đơn (=0 tự ẩn).
+- ✅ **Cột "Vị trí"** — hiển thị "📦 Sọt N" nếu mã đã vào sọt, "— Chưa" nếu chưa.
 - ✅ **Chống quét trùng có cửa sổ ân hạn** (`DUP_GRACE_SECONDS`, mặc định 60s):
   quét lại trong khoảng này → bỏ qua êm; quá đó → đánh dấu **trùng ×N** trên dòng
-  gốc + email Admin + agent kêu cảnh báo. **Không xoá dòng.**
-- ✅ **Cột Trạng thái lấy hàng**: "✔ Đã lấy hàng" / "ĐVVC chưa lấy hàng". Bấm để
-  đổi tay, hoặc dùng **🔎 Tra trạng thái** (Playwright tự đọc trang hãng — hiện SPX).
-- ✅ **Sửa mã vận đơn** ngay trên web: bấm nút ✏️ cạnh mã → nhập mã mới → nhập
-  mật khẩu (`DELETE_PASSWORD`). Hệ thống kiểm tra trùng và tự động phân loại lại ĐVVC.
+  gốc + email Admin + agent kêu cảnh báo. Không xoá dòng.
+- ✅ **Sửa mã**, **xoá** (có mật khẩu `DELETE_PASSWORD`), **xoá hàng loạt** (checkbox).
 - ✅ **Lọc thời gian**: Hôm nay / Hôm trước / Tuần này / Tuần trước / Tháng này /
-  Tháng trước / Quý / Năm / Tất cả (giờ VN). Áp cho KPI, bảng và khi xuất file.
-- ✅ **Xuất Excel** (đầy đủ cột) + **📤 Xuất file import** có modal preview: chọn
-  ĐVVC + khoảng thời gian + toggle "chỉ đơn đã lấy hàng" → xem trước danh sách →
-  xuất đúng format 1 cột "Mã" để import lên hệ thống nội bộ.
-- ✅ Tìm kiếm, lọc theo ĐVVC, xoá (có **mật khẩu xoá** kiểm ở server).
-- ✅ Realtime qua SSE; agent có **cửa sổ giao diện** + **hàng đợi offline** khi mất mạng.
+  Tháng trước / Quý / Năm / Tất cả (giờ VN).
+- ✅ **Xuất Excel** đầy đủ + **Xuất file import OPS** có modal preview trước khi tải.
 
-> Ghi chú: cột **NCC / Ghi chú** đã bỏ khỏi giao diện (theo yêu cầu vận hành);
-> schema DB vẫn giữ cột để dùng lại sau nếu cần.
+### Sọt (Basket) — gộp mã theo lô vật lý
+- ✅ Trên agent Windows, nhân viên bấm **"✅ Hoàn thành sọt"** khi đóng gói xong 1 thùng.
+- ✅ Server **gán `basket_id` cho từng mã** trong sọt (không chỉ đếm số).
+- ✅ Trang Admin tab **📦 Sọt** hiển thị tất cả sọt trong ngày, mỗi sọt kèm chi tiết
+  ĐVVC + nút **"📤 Bàn giao OPS"** riêng.
+- ✅ Bấm Bàn giao OPS cho 1 sọt → **chỉ post đúng mã của sọt đó** (query `WHERE
+  basket_id=X`, không lẫn với mã của sọt khác).
+- ✅ **Backfill** basket_id cho sọt cũ chưa gán (nút trên Admin, idempotent).
+
+### Auto import lên imv.ops (Playwright)
+- ✅ Playwright chạy trên VPS: login Keycloak SSO → mở `/tpl-sessions/new/{template_id}`
+  → gõ từng mã (OPS tự nhận diện ĐVVC) → bấm **TẠO** → đọc mã phiên **`MVECCE...`** →
+  đóng browser (**KHÔNG** tự bấm "Bàn giao 3PL", user tự làm khi hàng thực tế sẵn sàng).
+- ✅ Cấu hình per-carrier trong Admin: bật/tắt auto, `AUTO_IMPORT_BATCH`, `template_id`,
+  tên đối tác OPS.
+- ✅ **Log OPS** ghi vào DB + screenshot khi lỗi. Xem/xoá qua Admin tab **📜 Log**.
+- ✅ **Đồng bộ ngược** thủ công: nếu tự tạo phiên trên OPS, dán mã phiên + list mã
+  vào Admin để đánh dấu đã xử lý (không double-post).
+
+### Agent Windows (.exe)
+- ✅ Bắt mã **toàn cục** — cắm máy quét vào là quét được, không cần focus ô nhập.
+- ✅ **Cửa sổ giao diện** riêng: danh sách mã vừa quét · thống kê ĐVVC hôm nay ·
+  các sọt · các mã phiên OPS đã tạo.
+- ✅ **Hàng đợi offline** SQLite — mất mạng vẫn quét được, tự đẩy lại khi có mạng.
+- ✅ **Icon khay hệ thống** — chạy ngầm, khởi động cùng máy (auto-start .bat).
+- ✅ **Bíp** phản hồi khi quét: OK / trùng / lỗi.
 
 ## Chạy thử local (Docker)
 
 ```bash
 cd scan-ecom
-cp .env.example .env          # sửa API_KEY, mật khẩu DB, SMTP…
+cp .env.example .env          # sửa API_KEY, mật khẩu DB, OPS_USER/PASS…
 docker compose up --build
 ```
 
-Mở http://localhost:8000 → thấy web app. Thử API:
+Mở:
+- **http://localhost:8000** — trang quản lý mã (không cần login).
+- **http://localhost:8000/admin** — trang admin (login `admin/123456` mặc định).
 
-```bash
-# Thêm 1 mã (đổi API_KEY cho khớp .env)
-curl -X POST http://localhost:8000/api/scans \
-  -H "X-API-Key: doi-thanh-chuoi-ngau-nhien" \
-  -H "Content-Type: application/json" \
-  -d '{"code":"SPXVN123456789","source_agent":"test"}'
+## Deploy lên Dokploy / server thật
 
-# Quét lại đúng mã đó -> 409 trùng + email Admin
-# Tổng hợp:
-curl http://localhost:8000/api/summary
-```
-
-## Deploy lên Dokploy
-
-1. Push repo này lên Git (GitHub/GitLab).
-2. Trong Dokploy: **Create → Compose**, trỏ tới repo, chọn file `docker-compose.yml`.
-3. Vào tab **Environment** của app, dán nội dung `.env` (đổi `API_KEY`, mật khẩu DB,
-   `SMTP_*`, `ADMIN_EMAIL`). Đặt `CORS_ORIGINS` = domain thật (vd `https://scan.congty.com`).
+1. Push repo lên Git.
+2. Trên Dokploy: **Create → Compose**, trỏ tới repo, chọn `docker-compose.yml`.
+3. Tab **Environment** dán nội dung `.env` (đổi `API_KEY`, `DELETE_PASSWORD`,
+   `OPS_USER`, `OPS_PASS`, `CORS_ORIGINS`=domain thật).
 4. Gắn **Domain** cho service `app`, container port **8000**. Bật HTTPS (Let's Encrypt).
 5. **Deploy**. Xong, mở domain là ra web app.
-6. Trên máy có máy quét: cấu hình `agent/config.ini` với `url` = domain vừa gắn,
-   `api_key` khớp, rồi chạy agent (xem [agent/README.md](agent/README.md)).
+6. Trên máy quét Windows: cài `ScanEcomAgent.exe` + `config.ini` (xem
+   [agent/README.md](agent/README.md)).
 
-## Chỉnh luật nhận diện ĐVVC (ngay trên web, không cần code)
-Bấm nút **⚙️ Quản lý ĐVVC** trên web để **thêm / sửa / xoá** hãng bằng cách gõ
-**prefix** (chuỗi đầu mã, vd `SPXVN`, `8621`, `GYAB`) — không cần đụng code hay
-deploy lại. Bấm **💾 Lưu & phân loại lại toàn bộ** để áp dụng cho cả mã cũ.
+## Trang Admin `/admin`
 
-Prefix đã chốt từ mã thật: **SPX**=`SPXVN`, **J&T**=`8621`, **Best Express**=`TTVN`/`BE`,
-**GHN**=`GYAB`. Luật lưu trong DB (bảng `carrier_rules`); giá trị mặc định seed từ
-[backend/app/carriers.py](backend/app/carriers.py) khi bảng còn rỗng.
+6 tab ngang:
 
-## Lọc theo thời gian
-Dropdown: **Hôm nay / Hôm trước / Tuần này / Tuần trước / Tháng này / Tháng trước /
-Quý này / Năm nay / Tất cả** (giờ VN). Áp cho KPI, bảng và khi xuất file.
+| Tab | Chức năng |
+|-----|-----------|
+| 📊 **Dashboard** | KPI hôm nay + 5 shortcut nhanh |
+| 🚚 **Đơn vị vận chuyển** | Bảng 2 nhóm cột (🔍 Nhận diện prefix + 📤 Auto import) — mỗi hàng có nút **📤 Post** ngay |
+| 📤 **Test post OPS** | Chọn ĐVVC + số đơn tối đa → post ngay lên OPS để kiểm cấu hình |
+| 🔄 **Đồng bộ ngược** | Dán mã phiên OPS + list mã đã bàn giao thủ công → cập nhật DB |
+| 📦 **Sọt** | Bảng các sọt hôm nay, mỗi sọt có nút Bàn giao OPS + nút Backfill basket_id |
+| 📜 **Log OPS** | Log mọi lần post OPS (thành công/lỗi) + screenshot debug |
 
-## Tra trạng thái lấy hàng (Playwright)
-Nút **🔎 Tra trạng thái** gọi `POST /api/track/run` — server chạy Playwright (Chromium
-trong Docker) mở trang tracking của hãng, đọc DOM tìm dòng
-**"Đơn vị vận chuyển lấy hàng thành công"** → cập nhật cột trạng thái. Hiện hỗ trợ
-**SPX** (đã xác thực bằng mã thật); J&T/Best/GHN để khung trong
-[backend/app/tracker.py](backend/app/tracker.py), bổ sung selector sau.
-
-> Lưu ý: dùng trang tracking công khai (không phải API chính thức) — nên chạy từ
-> server ở VN, tốc độ có giới hạn (delay giữa các mã để tránh bị chặn).
-
-## Xuất file import lên hệ thống nội bộ
-Nút **📤 Xuất file import** mở modal cho phép:
-1. **Chọn ĐVVC** từ dropdown.
-2. **Chọn khoảng thời gian** (Hôm nay / Tuần này / Tháng này / Tất cả…).
-3. **Toggle** "Chỉ đơn đã lấy hàng" — bỏ tích để lấy tất cả đơn.
-4. **Xem trước danh sách** đơn hàng khớp điều kiện (preview realtime).
-5. Bấm **📥 Xuất file Excel** → `GET /api/export/import-file` xuất Excel đúng
-   format (2 sheet: "Dữ Liệu" cột **Mã** + "Diễn Giải"). File này import thẳng
-   lên hệ thống TPL nội bộ.
-
-API preview: `GET /api/export/import-file/preview?carrier=&period=&limit=&only_picked=`
-trả JSON danh sách + tổng số để hiển thị trong modal.
-
-## Auto import lên imv.ops (Playwright)
-Bật `AUTO_IMPORT_ENABLED=true` trong `.env`. Khi 1 hãng có đủ `AUTO_IMPORT_BATCH`
-(mặc định 100) đơn **đã lấy hàng** *chưa* được import, sau lần "Tra trạng thái"
-tiếp theo server sẽ tự:
-1. Xuất file Excel format import (cho đúng 100 đơn đó).
-2. Playwright mở `imv.ops`, login bằng `OPS_USER`/`OPS_PASS`, vào
-   `/tpl-sessions/new/{template_id}`, bấm IMPORT → chọn file → chọn Đối tác vận
-   chuyển → TẠO.
-3. Gán `session_id` cho 100 mã đó để không import lại.
-
-Cấu hình `OPS_CARRIER_MAP` (JSON) map từng hãng → `template_id` (số cuối URL) +
-tên partner (dù không còn dùng để chọn dropdown nhưng vẫn cần cấu hình để bật tính năng auto-import cho hãng đó).
+## Cấu hình `.env` (tóm tắt)
 
 ```env
-OPS_CARRIER_MAP={"SPX":{"template_id":2,"partner":"SPX Express"},"J&T":{"template_id":2,"partner":"J&T Express"},"GHN":{"template_id":2,"partner":"Giao Hàng Nhanh"},"Best Express":{"template_id":2,"partner":"BEST Express"},"Viettel Post":{"template_id":2,"partner":"Viettel Post"}}
-```
-Test cấu hình bằng: `curl -X POST 'http://<host>/api/ops/import-now?carrier=SPX'`.
+# --- Auth & bảo mật ---
+API_KEY=xxx                     # agent gửi qua header X-API-Key
+DELETE_PASSWORD=1512            # xác nhận khi xoá mã trên web
+POSTGRES_PASSWORD=xxx           # mật khẩu Postgres
 
-> ⚠️ Bảo mật: `OPS_USER`/`OPS_PASS` lưu trong `.env` trên VPS (không commit).
-> Selector login/upload viết theo pattern linh hoạt; nếu imv.ops đổi giao diện,
-> chỉnh `_login`/`_click_first` trong [ops_uploader.py](backend/app/ops_uploader.py).
+# --- App ---
+APP_PORT=8000
+CORS_ORIGINS=http://your-domain
+DUP_GRACE_SECONDS=60            # cửa sổ ân hạn quét trùng
+
+# --- Auto import imv.ops ---
+AUTO_IMPORT_ENABLED=true
+AUTO_IMPORT_BATCH=100
+OPS_URL=https://imv.ops.vnfai.com
+OPS_USER=your-ops-user
+OPS_PASS=your-ops-pass
+# Fallback nếu chưa cấu hình trên Admin (JSON 1 dòng):
+OPS_CARRIER_MAP={"SPX":{"template_id":2,"partner":"SPX Express"}, ...}
+
+# --- Email (tuỳ chọn, báo mã trùng) ---
+MAIL_ENABLED=false
+SMTP_HOST=smtp.gmail.com
+SMTP_USER=xxx
+SMTP_PASS=xxx
+ADMIN_EMAIL=xxx
+```
+
+## Nhận diện ĐVVC (prefix đã chốt từ mã thật)
+
+| ĐVVC | Prefix |
+|------|--------|
+| SPX | `SPXVN` |
+| J&T | `8621` |
+| Best Express | `TTVN` hoặc `BE` |
+| GHN | `GYAB` |
+
+Sửa/thêm trên trang Admin → tab **🚚 Đơn vị vận chuyển**. Sửa xong bấm **💾 Lưu tất cả** +
+**↻ Phân loại lại** trên trang chính.
+
+## Luồng nghiệp vụ chuẩn (khuyến nghị)
+
+```
+1. Quét mã vào Agent → bảng chính hiện "— Chưa" (chưa vào sọt)
+2. Đóng gói 1 thùng xong → nhân viên bấm "✅ Hoàn thành sọt" trên Agent
+3. Web hiện "📦 Sọt 1" cho các mã của sọt đó
+4. Admin vào /admin → tab Sọt → bấm "📤 Bàn giao OPS" cho sọt cần bàn giao
+5. Playwright tự tạo phiên trên OPS → trả mã MVECCE... vào cột Vị trí không đổi,
+   nhưng mã phiên hiện trong tab Log OPS + tab Sọt (có badge "đã bàn giao")
+6. Khi tài xế ĐVVC đến, admin tự vào OPS bấm "BÀN GIAO 3PL" cho phiên đó
+   (hệ thống KHÔNG tự bấm để tránh bàn giao khi hàng chưa ra khỏi kho)
+```
 
 ## API tóm tắt
+
 | Method | Path | Mô tả |
 |--------|------|-------|
 | POST | `/api/scans` | Agent gửi mã (cần `X-API-Key`). 201 mới / 409 trùng |
-| GET | `/api/scans?q=&carrier=&period=&limit=&offset=` | Danh sách (lọc kỳ) |
-| GET | `/api/summary?period=` | Total + theo ĐVVC (lọc kỳ) |
-| PATCH | `/api/scans/{id}` | Sửa ĐVVC / `pickup_status` / `code` (sửa mã cần `X-Delete-Password`) |
-| DELETE | `/api/scans/{id}` | Xoá (cần header `X-Delete-Password`) |
-| GET | `/api/export?format=xlsx\|csv&period=` | Xuất bảng đầy đủ (lọc kỳ) |
-| GET | `/api/export/import-file?carrier=&period=&limit=&only_picked=` | Xuất Excel format import |
-| GET | `/api/export/import-file/preview?carrier=&period=&limit=&only_picked=` | Preview danh sách trước khi xuất |
-| POST | `/api/track/run` | Tra trạng thái lấy hàng (Playwright, chạy nền) |
-| POST | `/api/ops/import-now?carrier=SPX` | Ép import ngay 1 hãng lên imv.ops (test) |
+| GET | `/api/scans?q=&carrier=&period=&limit=&offset=` | Danh sách (có `basket_seq`) |
+| GET | `/api/summary?period=` | Tổng + phân bố ĐVVC |
+| PATCH | `/api/scans/{id}` | Sửa ĐVVC / `code` (sửa mã cần `X-Delete-Password`) |
+| DELETE | `/api/scans/{id}` | Xoá (cần `X-Delete-Password`) |
 | POST | `/api/scans/bulk-delete` | Xoá hàng loạt theo `ids` (cần `X-Delete-Password`) |
-| POST | `/api/reclassify` | Phân loại lại toàn bộ |
-| GET | `/api/carriers` · POST · PATCH `/{id}` · DELETE `/{id}` | Quản lý luật ĐVVC |
-| GET | `/api/stream` | SSE realtime |
+| GET | `/api/export?format=xlsx\|csv&period=` | Xuất bảng đầy đủ |
+| GET | `/api/export/import-file?carrier=&period=&limit=&only_picked=` | Xuất Excel format import |
+| GET | `/api/export/import-file/preview?...` | Preview trước khi xuất |
+| POST | `/api/reclassify` | Phân loại lại toàn bộ mã |
+| GET | `/api/carriers` · POST · PATCH `/{id}` · DELETE `/{id}` | Quản lý luật ĐVVC + config auto import |
+| POST | `/api/baskets/close?agent_name=` | Chốt 1 sọt (agent gọi khi bấm Hoàn thành sọt) |
+| GET | `/api/baskets?agent_name=&period=` | Danh sách sọt |
+| POST | `/api/baskets/backfill` | Gán basket_id cho sọt cũ (idempotent) |
+| POST | `/api/ops/import-now?carrier=&limit=&require_picked=` | Post 1 batch lên OPS (test) |
+| POST | `/api/ops/import-basket?basket_id=` | Bàn giao 1 sọt lên OPS |
+| POST | `/api/ops/sync-manual` | Đồng bộ ngược mã phiên OPS về DB |
+| GET | `/api/ops/logs?limit=` | Danh sách log OPS |
+| GET | `/api/ops/logs/{id}/screenshot` | Screenshot lỗi (PNG) |
+| DELETE | `/api/ops/logs/{id}` · `/api/ops/logs` | Xoá 1 / tất cả log |
+| DELETE | `/api/sessions/carrier/{name}` | Xoá tất cả phiên của 1 ĐVVC (khôi phục về chưa import) |
+| GET | `/api/stream` | SSE realtime (scan / update / delete / basket_close / ops_log / auto_import) |
+| GET | `/admin` | Trang Admin (Basic Auth: `admin/123456`) |
+
+## Ghi chú kỹ thuật
+
+- **Playwright** cần Chromium — Dockerfile dùng base image
+  `mcr.microsoft.com/playwright/python:v1.48.0-noble` (đã có sẵn browser).
+- **Migration nhẹ** tự chạy khi container start — thêm cột mới vào bảng cũ mà
+  không mất dữ liệu.
+- **`session_id`** trong bảng `scans` = mã phiên OPS đã gán (ví dụ `MVECCEJIPX3K`).
+  Rỗng = chưa bàn giao.
+- **`basket_id`** = ID sọt chứa mã đó. NULL = chưa vào sọt.
+- **Đóng trình duyệt khi đang post OPS**: an toàn — Playwright chạy trên VPS,
+  không phụ thuộc client. Kết quả xem lại trong tab Log OPS.
