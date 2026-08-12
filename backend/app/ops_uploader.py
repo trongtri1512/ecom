@@ -167,15 +167,30 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                 "button:has-text('Tạo')",
             ])
 
-            # 7) Chờ redirect + đọc mã phiên
+            # 7) Chờ popup "Tạo phiên bàn giao thành công" (nb-dialog) rồi bấm OK.
+            #    QUAN TRỌNG: phải đóng popup trước khi đọc mã phiên, nếu không
+            #    page.inner_text('body') chỉ đọc text popup, không lấy được mã.
+            page.wait_for_timeout(2000)
+            try:
+                for btn in page.locator("button:has-text('OK'), button:has-text('Đồng ý'), button:has-text('ĐỒNG Ý')").all():
+                    if btn.is_visible():
+                        btn.click(force=True)
+                        page.wait_for_timeout(500)
+                        break
+            except Exception:
+                pass
+
+            # Chờ URL đổi sang /#/tpl-sessions/{id}/view (OPS redirect sau khi tạo).
             ops_session_id = ""
             try:
                 page.wait_for_function(f"() => location.href !== {url_before!r}", timeout=10000)
             except Exception:
                 pass
-            
-            # Chờ thêm để UI render mã phiên
+
+            # Chờ trang chi tiết render xong mã phiên (VD MVECCE2US39U trong card
+            # bên phải). Cần chờ đủ lâu vì Angular render bất đồng bộ.
             page.wait_for_timeout(4000)
+            _save_screenshot(page, "before_extract_session")
 
             ops_session_id = _extract_session_id(page)
 
