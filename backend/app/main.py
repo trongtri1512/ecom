@@ -201,10 +201,22 @@ def list_scans(
         select(func.count()).select_from(stmt.subquery())
     )
     rows = db.scalars(stmt.limit(limit).offset(offset)).all()
-    return {
-        "total": total,
-        "items": [r.as_dict() for r in rows],
-    }
+
+    # Bulk lookup basket_id -> seq (tránh N+1). Chỉ query các basket_id có mặt.
+    bids = {r.basket_id for r in rows if r.basket_id}
+    seq_map = {}
+    if bids:
+        basket_rows = db.execute(
+            select(Basket.id, Basket.seq).where(Basket.id.in_(bids))
+        ).all()
+        seq_map = {bid: seq for bid, seq in basket_rows}
+
+    items = []
+    for r in rows:
+        d = r.as_dict()
+        d["basket_seq"] = seq_map.get(r.basket_id) if r.basket_id else None
+        items.append(d)
+    return {"total": total, "items": items}
 
 
 @app.get("/api/summary")

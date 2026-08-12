@@ -137,7 +137,9 @@ async function loadSummary() {
   let html = `<div class="kpi total"><div class="label">${escapeHtml(totalLabel)}</div><div class="value">${s.total}</div></div>`;
   for (const c of carrierOrder) {
     const n = s.by_carrier[c] || 0;
-    html += `<div class="kpi"><div class="label">${c}</div><div class="value">${n}</div></div>`;
+    // Ẩn thẻ =0 (CSS .kpi.zero { display: none }) để KPI gọn 1 hàng.
+    const cls = n === 0 ? "kpi zero" : "kpi";
+    html += `<div class="${cls}"><div class="label">${c}</div><div class="value">${n}</div></div>`;
   }
   kpisEl.innerHTML = html;
 }
@@ -155,20 +157,19 @@ function rowHtml(r, idx) {
     <td>${idx}</td>
     <td class="code">${escapeHtml(r.code)}${dupBadge}</td>
     <td><span class="badge ${isOther ? "other" : ""}">${escapeHtml(r.carrier)}</span></td>
-    <td>${statusCell(r)}</td>
+    <td>${locationCell(r)}</td>
     <td>${fmtTime(r.scanned_at)}</td>
     <td>${escapeHtml(r.source_agent || "")}</td>
     <td class="row-actions"><button class="icon-btn btn-edit" title="Sửa mã">✏️</button><button class="icon-btn btn-del" title="Xoá">🗑️</button></td>
   </tr>`;
 }
 
-/* Ô Trạng thái: bấm để đổi Đã lấy / Chưa lấy (sửa tay). */
-function statusCell(r) {
-  const picked = r.pickup_status === "picked";
-  const cls = picked ? "st-picked" : "st-pending";
-  const txt = picked ? "✔ Đã lấy hàng" : "ĐVVC chưa lấy hàng";
-  const title = r.pickup_checked_at ? `Cập nhật: ${fmtTime(r.pickup_checked_at)}` : "Bấm để đổi trạng thái";
-  return `<button class="status-btn ${cls}" data-picked="${picked ? 1 : 0}" title="${title}">${txt}</button>`;
+/* Ô Vị trí: hiện "Sọt N" nếu đã vào sọt, "—" nếu chưa. */
+function locationCell(r) {
+  if (r.basket_seq) {
+    return `<span class="loc-badge loc-in" title="Đã vào Sọt ${r.basket_seq}">📦 Sọt ${r.basket_seq}</span>`;
+  }
+  return `<span class="loc-badge loc-out" title="Chưa vào sọt nào">— Chưa</span>`;
 }
 
 function escapeHtml(s) {
@@ -254,25 +255,8 @@ async function refresh() {
   await Promise.all([loadSummary(), loadRows()]);
 }
 
-/* ------------------------- Sự kiện bảng (đổi trạng thái / sửa mã / xoá) ------------------------- */
-// Bấm nút Trạng thái -> đổi Đã lấy <-> Chưa lấy (sửa tay).
-rowsEl.addEventListener("click", async (e) => {
-  const st = e.target.closest(".status-btn");
-  if (!st) return;
-  const id = st.closest("tr").dataset.id;
-  const newStatus = st.dataset.picked === "1" ? "pending" : "picked";
-  try {
-    await api(`/api/scans/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pickup_status: newStatus }),
-    });
-    // realtime 'update' sẽ refresh; cập nhật ngay cho mượt:
-    loadRows();
-  } catch (err) {
-    toast("Lỗi cập nhật trạng thái", String(err), "danger");
-  }
-});
+/* ------------------------- Sự kiện bảng (sửa mã / xoá) ------------------------- */
+// (Đã bỏ nút Trạng thái Đã/Chưa lấy — thay bằng cột Vị trí Sọt N, không cần click.)
 
 // Bấm nút ✏️ Sửa mã vận đơn -> hỏi mã mới + mật khẩu.
 rowsEl.addEventListener("click", async (e) => {
@@ -352,26 +336,13 @@ function downloadExport(fmt) {
   window.location.href = API + "/api/export?" + params.toString();
 }
 
-// Tra trạng thái lấy hàng (Playwright, chạy nền trên server)
-$("#btnTrack").addEventListener("click", async () => {
-  try {
-    const r = await api("/api/track/run", { method: "POST" });
-    if (r.status === "already_running") {
-      toast("Đang tra", "Tiến trình tra trạng thái đang chạy…", "warn");
-    } else {
-      toast("Bắt đầu tra trạng thái", `ĐVVC: ${(r.carriers || []).join(", ")}. Kết quả cập nhật dần.`, "ok");
-    }
-  } catch (err) {
-    toast("Lỗi tra trạng thái", String(err), "danger");
-  }
-});
+// (Đã bỏ nút Tra trạng thái SPX — chuyển sang mô hình Sọt để quản lý vị trí mã.)
 
 // ---- Modal xuất file import (với preview danh sách) ----
 const importModal = $("#importModal");
 const impCarrier = $("#impCarrier");
 const impPeriod = $("#impPeriod");
 const impLimit = $("#impLimit");
-const impOnlyPicked = $("#impOnlyPicked");
 const impRows = $("#impRows");
 const impEmpty = $("#impEmpty");
 const impSummary = $("#impSummary");
@@ -412,7 +383,7 @@ async function doImportPreview() {
     carrier,
     period: impPeriod.value || "day",
     limit: String(parseInt(impLimit.value, 10) || 500),
-    only_picked: String(impOnlyPicked.checked),
+    only_picked: "false",  // đã bỏ điều kiện "đã lấy hàng" — xuất tất cả trong kỳ
   });
   try {
     const data = await api("/api/export/import-file/preview?" + params.toString());
@@ -420,14 +391,14 @@ async function doImportPreview() {
     const total = data.total || 0;
     impEmpty.hidden = items.length > 0;
     impRows.innerHTML = items.map((r, i) => {
-      const picked = r.pickup_status === "picked";
-      const stTxt = picked ? "✔ Đã lấy" : r.pickup_status === "pending" ? "Chưa lấy" : "—";
-      const stCls = picked ? "st-picked" : r.pickup_status === "pending" ? "st-pending" : "";
+      const locTxt = r.basket_seq
+        ? `<span class="loc-badge loc-in">📦 Sọt ${r.basket_seq}</span>`
+        : `<span class="loc-badge loc-out">— Chưa</span>`;
       return `<tr>
         <td>${i + 1}</td>
         <td class="code">${escapeHtml(r.code)}</td>
         <td><span class="badge">${escapeHtml(r.carrier)}</span></td>
-        <td><span class="${stCls}">${stTxt}</span></td>
+        <td>${locTxt}</td>
         <td>${fmtTime(r.scanned_at)}</td>
       </tr>`;
     }).join("");
@@ -435,8 +406,7 @@ async function doImportPreview() {
     const limitNum = parseInt(impLimit.value, 10) || 500;
     const shown = Math.min(items.length, limitNum);
     const periodLabel = impPeriod.selectedOptions[0] ? impPeriod.selectedOptions[0].textContent : "";
-    const pickedTxt = impOnlyPicked.checked ? ", chỉ đơn đã lấy hàng" : ", tất cả trạng thái";
-    impSummary.innerHTML = `<strong>${carrier}</strong> — ${periodLabel}: tổng <strong>${total}</strong> đơn khớp${pickedTxt}. File xuất sẽ gồm <strong>${shown}</strong> đơn.`;
+    impSummary.innerHTML = `<strong>${carrier}</strong> — ${periodLabel}: tổng <strong>${total}</strong> đơn. File xuất sẽ gồm <strong>${shown}</strong> đơn.`;
     impSummary.hidden = false;
     btnImportDownload.disabled = items.length === 0;
   } catch (err) {
@@ -451,7 +421,6 @@ async function doImportPreview() {
 $("#btnImportPreview").addEventListener("click", doImportPreview);
 impCarrier.addEventListener("change", doImportPreview);
 impPeriod.addEventListener("change", doImportPreview);
-impOnlyPicked.addEventListener("change", doImportPreview);
 
 // Xuất file Excel.
 btnImportDownload.addEventListener("click", () => {
@@ -461,7 +430,7 @@ btnImportDownload.addEventListener("click", () => {
     carrier,
     period: impPeriod.value || "day",
     limit: String(parseInt(impLimit.value, 10) || 100),
-    only_picked: String(impOnlyPicked.checked),
+    only_picked: "false",
   });
   window.location.href = API + "/api/export/import-file?" + params.toString();
   toast("Đang tải", `File import ${carrier} đang được xuất…`, "ok");

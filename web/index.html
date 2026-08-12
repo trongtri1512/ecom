@@ -42,10 +42,8 @@
       <option value="all">Tất cả</option>
     </select>
     <span class="spacer"></span>
-    <button id="btnTrack" class="btn btn-ghost" title="Tra trạng thái lấy hàng (SPX) cho các đơn hôm nay">🔎 Tra trạng thái</button>
-    <div class="spacer"></div>
     <button id="btnReclassify" class="btn btn-ghost" title="Chạy lại nhận diện ĐVVC cho toàn bộ mã">↻ Phân loại lại</button>
-    <button id="btnImport" class="btn" title="Xuất file Excel để import lên hệ thống (chỉ đơn đã lấy hàng)">📤 Xuất file import</button>
+    <button id="btnImport" class="btn" title="Xuất Excel format import lên hệ thống OPS">📤 Xuất file import</button>
     <button id="btnXlsx" class="btn btn-primary">Xuất Excel</button>
   </section>
 
@@ -65,7 +63,7 @@
           <th>#</th>
           <th>Mã vận đơn</th>
           <th>ĐVVC</th>
-          <th>Trạng thái</th>
+          <th>Vị trí</th>
           <th>Thời gian quét</th>
           <th>Nguồn</th>
           <th></th>
@@ -138,12 +136,6 @@
           <input id="impLimit" type="number" value="100" min="1" max="5000" style="width:100px;" />
         </div>
         <div class="import-filter-group">
-          <label class="toggle-label">
-            <input id="impOnlyPicked" type="checkbox" checked />
-            Chỉ đơn đã lấy hàng
-          </label>
-        </div>
-        <div class="import-filter-group">
           <button id="btnImportPreview" class="btn btn-primary">🔍 Xem trước</button>
         </div>
       </div>
@@ -155,7 +147,7 @@
               <th>#</th>
               <th>Mã vận đơn</th>
               <th>ĐVVC</th>
-              <th>Trạng thái</th>
+              <th>Vị trí</th>
               <th>Thời gian quét</th>
             </tr>
           </thead>
