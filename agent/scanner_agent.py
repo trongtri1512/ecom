@@ -250,10 +250,19 @@ class Sender:
     def get_sessions_today(self):
         """Danh sách mã phiên đã import từ ops_logs. None nếu lỗi."""
         try:
-            r = self.session.get(self.cfg["url"] + "/api/ops/logs?limit=30", timeout=8)
+            r = self.session.get(self.cfg["url"] + "/api/ops/sessions", timeout=8)
             if r.status_code == 200:
-                items = r.json().get("items", [])
-                return [i for i in items if "import" in i.get("action", "") and i.get("session_id")]
+                return r.json().get("items", [])
+        except requests.RequestException:
+            pass
+        return None
+
+    def import_basket(self, basket_id: int):
+        """Bàn giao sọt cụ thể lên OPS."""
+        try:
+            r = self.session.post(self.cfg["url"] + f"/api/ops/import-basket?basket_id={basket_id}", timeout=15)
+            if r.status_code == 200:
+                return r.json()
         except requests.RequestException:
             pass
         return None
@@ -825,19 +834,35 @@ class AgentWindow:
             data = list(self._baskets or [])
         
         if not hasattr(self, 'tree_baskets'):
-            cols = ("seq", "total", "details", "time")
-            self.tree_baskets = ttk.Treeview(self.baskets_tab, columns=cols, show="headings")
+            # Vùng chứa nút hành động (nằm trên tree)
+            act_frame = tk.Frame(self.baskets_tab, bg=self.PANEL)
+            act_frame.pack(fill="x", padx=12, pady=(10, 0))
+            tk.Button(act_frame, text="🚀 Bàn giao Sọt đã chọn lên OPS", command=self._post_basket,
+                      bg="#3b82f6", fg="white", font=("Segoe UI", 9, "bold"),
+                      relief="flat", padx=10).pack(side="left")
+                      
+            # Vùng Tree
+            tree_frame = tk.Frame(self.baskets_tab, bg=self.PANEL)
+            tree_frame.pack(fill="both", expand=True, padx=12, pady=10)
+            
+            # id là cột ẩn để lưu basket_id
+            cols = ("id", "seq", "total", "details", "time")
+            self.tree_baskets = ttk.Treeview(tree_frame, columns=cols, show="headings")
             self.tree_baskets.pack(side="left", fill="both", expand=True)
             
-            for c, name in zip(cols, ["Sọt", "Tổng số", "Chi tiết theo ĐVVC", "Thời gian chốt"]):
-                self.tree_baskets.heading(c, text=name)
+            self.tree_baskets.heading("id", text="ID")
+            self.tree_baskets.heading("seq", text="Sọt")
+            self.tree_baskets.heading("total", text="Tổng số")
+            self.tree_baskets.heading("details", text="Chi tiết theo ĐVVC")
+            self.tree_baskets.heading("time", text="Thời gian chốt")
             
+            self.tree_baskets.column("id", width=0, stretch=tk.NO) # Ẩn cột ID
             self.tree_baskets.column("seq", width=60, anchor="center")
             self.tree_baskets.column("total", width=80, anchor="center")
             self.tree_baskets.column("details", width=400, anchor="w")
             self.tree_baskets.column("time", width=120, anchor="center")
             
-            sb = tk.Scrollbar(self.baskets_tab, command=self.tree_baskets.yview)
+            sb = tk.Scrollbar(tree_frame, command=self.tree_baskets.yview)
             sb.pack(side="right", fill="y")
             self.tree_baskets.config(yscrollcommand=sb.set)
 
@@ -848,17 +873,18 @@ class AgentWindow:
         if not data:
             if not self.baskets_empty.winfo_ismapped():
                 self.baskets_empty.pack(anchor="w", padx=12, pady=12)
-            if self.tree_baskets.winfo_ismapped():
-                self.tree_baskets.pack_forget()
+            # Ẩn nút và tree nếu trống
+            self.tree_baskets.master.pack_forget()
             return
             
         if self.baskets_empty.winfo_ismapped():
             self.baskets_empty.pack_forget()
         
-        if not self.tree_baskets.winfo_ismapped():
-            self.tree_baskets.pack(side="left", fill="both", expand=True)
+        if not self.tree_baskets.master.winfo_ismapped():
+            self.tree_baskets.master.pack(fill="both", expand=True, padx=12, pady=10)
             
         for b in data:
+            b_id = b.get("id")
             seq = b.get('name', 'Sọt ?')
             total = b.get("total", 0)
             
@@ -868,7 +894,47 @@ class AgentWindow:
             details = " | ".join(details_arr) if details_arr else "Trống"
             
             time_str = (b.get("closed_at") or "")[:19].replace("T", " ")
-            self.tree_baskets.insert("", "end", values=(seq, total, details, time_str))
+            self.tree_baskets.insert("", "end", values=(b_id, seq, total, details, time_str))
+
+    def _post_basket(self):
+        """Khi bấm nút Bàn giao sọt đã chọn lên OPS."""
+        from tkinter import messagebox
+        selection = self.tree_baskets.selection()
+        if not selection:
+            messagebox.showwarning("Chưa chọn sọt", "Vui lòng click chọn một sọt trong danh sách trước!")
+            return
+            
+        item = self.tree_baskets.item(selection[0])
+        b_id = item["values"][0]
+        seq = item["values"][1]
+        
+        if not messagebox.askyesno("Xác nhận", f"Bạn có chắc chắn muốn đẩy {seq} lên hệ thống OPS không?"):
+            return
+            
+        def worker():
+            res = self.state["sender"].import_basket(b_id)
+            def show_result():
+                if res and res.get("status") == "done":
+                    results = res.get("results", [])
+                    if not results:
+                        messagebox.showinfo("Hoàn tất", f"Đã đẩy {seq}. (Trống hoặc không có mã cần đẩy)")
+                        return
+                    
+                    msg = f"Kết quả đẩy {seq}:\n\n"
+                    for r in results:
+                        if r.get("status") == "ok":
+                            msg += f"✅ {r['carrier']}: Thành công {r['count']} đơn. Phiên: {r['session_id']}\n"
+                        else:
+                            msg += f"❌ {r['carrier']}: LỖI - {r.get('error')}\n"
+                    messagebox.showinfo("Kết quả bàn giao", msg)
+                elif res and res.get("status") == "empty":
+                    messagebox.showwarning("Không có đơn", res.get("message", "Sọt rỗng hoặc đã đẩy hết rồi."))
+                else:
+                    err = res.get("error", "Lỗi không xác định") if res else "Không kết nối được server"
+                    messagebox.showerror("Lỗi", f"Lỗi hệ thống:\n{err}")
+            self.root.after(0, show_result)
+        
+        threading.Thread(target=worker, daemon=True).start()
 
     # --- vòng lặp cập nhật GUI ---
     def _poll(self):

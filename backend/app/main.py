@@ -675,6 +675,75 @@ def ops_import_now(
     finally:
         db.close()
 
+
+@app.post("/api/ops/import-basket")
+def ops_import_basket(
+    basket_id: int = Query(..., description="ID của sọt cần đẩy lên OPS"),
+    db: Session = Depends(get_db)
+):
+    """Kích hoạt đẩy các kiện hàng của một sọt cụ thể lên OPS."""
+    from . import ops_uploader
+    if not (config.OPS_USER and config.OPS_PASS):
+        raise HTTPException(status_code=400, detail="Thiếu OPS_USER/OPS_PASS trong env")
+        
+    basket = db.scalar(select(Basket).where(Basket.id == basket_id))
+    if not basket:
+        raise HTTPException(status_code=404, detail="Không tìm thấy sọt")
+        
+    scans = db.scalars(
+        select(Scan)
+        .where(Scan.source_agent == basket.source_agent,
+               Scan.scanned_at > basket.started_at,
+               Scan.scanned_at <= basket.closed_at,
+               Scan.session_id == "")
+    ).all()
+    
+    if not scans:
+        return {"status": "empty", "message": "Không có mã nào trong sọt này cần đẩy (đã đẩy hết hoặc sọt rỗng)."}
+        
+    by_carrier = {}
+    for s in scans:
+        by_carrier.setdefault(s.carrier, []).append(s)
+        
+    results = []
+    for carrier, carrier_scans in by_carrier.items():
+        cfg = _get_ops_config_for_carrier(db, carrier)
+        if not cfg:
+            results.append({"carrier": carrier, "error": "Chưa cấu hình đối tác OPS"})
+            continue
+            
+        template_id = cfg["template_id"]
+        partner = cfg["partner"]
+        codes = [s.code for s in carrier_scans]
+        stamp = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{carrier}"
+        
+        result = ops_uploader.scan_import(carrier, codes, template_id, partner, stamp)
+        if result.get("ok"):
+            session_id = result.get("ops_session_id") or stamp
+            failed_codes = result.get("failed_codes", [])
+            successful_codes = [c for c in codes if c not in failed_codes]
+            entered = len(successful_codes)
+            
+            for r in carrier_scans:
+                if r.code in successful_codes:
+                    r.session_id = session_id
+                    
+            if failed_codes:
+                db.execute(delete(Scan).where(Scan.code.in_(failed_codes)))
+                
+            db.commit()
+            _log_ops(db, "success", "import_basket", carrier, entered, session_id, f"Bàn giao thủ công sọt {basket.seq}.", "")
+            events.publish("auto_import", {"carrier": carrier, "count": entered, "session_id": session_id})
+            results.append({"carrier": carrier, "status": "ok", "count": entered, "session_id": session_id})
+        else:
+            err = result.get("error", "")
+            shot = result.get("screenshot_file", "")
+            _log_ops(db, "error", "import_basket", carrier, len(codes), "", err, shot)
+            events.publish("auto_import_error", {"carrier": carrier, "error": err})
+            results.append({"carrier": carrier, "error": err})
+
+    return {"status": "done", "results": results}
+
 # ----------------------------- Đồng bộ ngược thủ công -----------------------------
 @app.post("/api/ops/sync-manual")
 def api_ops_sync_manual(req: dict, db: Session = Depends(get_db)):
