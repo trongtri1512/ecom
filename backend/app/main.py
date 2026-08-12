@@ -3,19 +3,24 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
+import zipfile
 from datetime import datetime, timedelta, timezone
 
 from fastapi import (
     BackgroundTasks,
     Depends,
     FastAPI,
+    File,
+    Form,
     Header,
     HTTPException,
     Query,
     Request,
+    UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select, delete, update
 from sqlalchemy.orm import Session
@@ -24,7 +29,7 @@ from . import config, events, export
 from .carriers import carrier_names, detect_carrier, seed_default_rules
 from .db import SessionLocal, get_db, init_db
 from .mailer import send_duplicate_alert
-from .models import Basket, CarrierRule, OpsLog, Scan
+from .models import AgentRelease, Basket, CarrierRule, OpsLog, Scan
 from .schemas import BulkDeleteIn, CarrierRuleIn, ScanIn, ScanOut, ScanUpdate
 
 app = FastAPI(title="Scan Ecom API", version="1.0.0")
@@ -1363,6 +1368,159 @@ def check_admin(credentials: HTTPBasicCredentials = Depends(security)):
             headers={"WWW-Authenticate": "Basic"},
         )
     return credentials.username
+
+
+# ----------------------------- Agent Release & Auto Update -----------------------------
+
+@app.get("/api/agent/version")
+def get_agent_version(db: Session = Depends(get_db)):
+    """Trả về phiên bản Agent mới nhất hiện tại."""
+    release = db.execute(
+        select(AgentRelease).where(AgentRelease.is_active == True).order_by(AgentRelease.id.desc())
+    ).scalars().first()
+
+    if not release:
+        return {
+            "latest_version": "1.0.0",
+            "download_url": None,
+            "changelog": "",
+            "released_at": None,
+        }
+
+    return {
+        "latest_version": release.version,
+        "download_url": "/api/agent/download-source",
+        "changelog": release.changelog,
+        "released_at": release.created_at.isoformat() if release.created_at else None,
+    }
+
+
+@app.get("/api/agent/download-source")
+def download_agent_source(db: Session = Depends(get_db)):
+    """Tải file .zip mã nguồn phiên bản Agent mới nhất."""
+    release = db.execute(
+        select(AgentRelease).where(AgentRelease.is_active == True).order_by(AgentRelease.id.desc())
+    ).scalars().first()
+
+    if not release:
+        raise HTTPException(status_code=404, detail="Chưa có bản phát hành Agent nào")
+
+    file_path = os.path.join(config.AGENT_RELEASES_DIR, release.filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File release không tồn tại trên server")
+
+    return FileResponse(
+        path=file_path,
+        filename=release.filename,
+        media_type="application/zip",
+    )
+
+
+@app.get("/api/agent/releases")
+def list_agent_releases(
+    db: Session = Depends(get_db),
+    username: str = Depends(check_admin),
+):
+    """Danh sách tất cả bản phát hành Agent (Admin)."""
+    releases = db.execute(
+        select(AgentRelease).order_by(AgentRelease.id.desc())
+    ).scalars().all()
+    return [r.as_dict() for r in releases]
+
+
+@app.post("/api/agent/releases/pack-current")
+def pack_current_agent_release(
+    version: str = Form(...),
+    changelog: str = Form(default=""),
+    db: Session = Depends(get_db),
+    username: str = Depends(check_admin),
+):
+    """Nén thư mục agent/ trên server thành file .zip và phát hành bản mới."""
+    version = version.strip()
+    if not version:
+        raise HTTPException(status_code=400, detail="Vui lòng nhập số phiên bản (VD: 1.1.0)")
+
+    existing = db.execute(select(AgentRelease).where(AgentRelease.version == version)).scalars().first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Phiên bản {version} đã tồn tại")
+
+    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    agent_dir = os.path.join(root_dir, "agent")
+    if not os.path.isdir(agent_dir):
+        agent_dir = "/app/agent"
+    if not os.path.isdir(agent_dir):
+        raise HTTPException(status_code=404, detail=f"Không tìm thấy thư mục agent/ trên server ({agent_dir})")
+
+    filename = f"agent_src_v{version}.zip"
+    zip_path = os.path.join(config.AGENT_RELEASES_DIR, filename)
+
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for root, dirs, files in os.walk(agent_dir):
+            dirs[:] = [d for d in dirs if d not in ("dist", ".venv", "__pycache__", ".git", ".idea")]
+            for file in files:
+                if file.endswith((".pyc", ".db")) or file == "config.ini":
+                    continue
+                file_abs = os.path.join(root, file)
+                rel_path = os.path.relpath(file_abs, agent_dir)
+                zipf.write(file_abs, rel_path)
+
+    db.execute(update(AgentRelease).values(is_active=False))
+    
+    release = AgentRelease(
+        version=version,
+        filename=filename,
+        changelog=changelog,
+        is_active=True,
+    )
+    db.add(release)
+    db.commit()
+    db.refresh(release)
+
+    events.emit_event("agent_release", release.as_dict())
+    return release.as_dict()
+
+
+@app.post("/api/agent/releases/upload")
+async def upload_agent_release(
+    version: str = Form(...),
+    changelog: str = Form(default=""),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    username: str = Depends(check_admin),
+):
+    """Upload file .zip mã nguồn Agent thủ công để phát hành."""
+    version = version.strip()
+    if not version:
+        raise HTTPException(status_code=400, detail="Vui lòng nhập số phiên bản (VD: 1.1.0)")
+    if not file.filename.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Vui lòng upload file định dạng .zip")
+
+    existing = db.execute(select(AgentRelease).where(AgentRelease.version == version)).scalars().first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Phiên bản {version} đã tồn tại")
+
+    filename = f"agent_src_v{version}.zip"
+    zip_path = os.path.join(config.AGENT_RELEASES_DIR, filename)
+
+    contents = await file.read()
+    with open(zip_path, "wb") as f:
+        f.write(contents)
+
+    db.execute(update(AgentRelease).values(is_active=False))
+    
+    release = AgentRelease(
+        version=version,
+        filename=filename,
+        changelog=changelog,
+        is_active=True,
+    )
+    db.add(release)
+    db.commit()
+    db.refresh(release)
+
+    events.emit_event("agent_release", release.as_dict())
+    return release.as_dict()
+
 
 @app.get("/admin", response_class=HTMLResponse)
 def serve_admin(username: str = Depends(check_admin)):

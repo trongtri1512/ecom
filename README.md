@@ -46,12 +46,22 @@ xé), tự động **bàn giao lên imv.ops** khi đủ điều kiện, xem onli
 - ✅ **Xuất Excel** đầy đủ + **Xuất file import OPS** có modal preview trước khi tải.
 
 ### Sọt (Basket) — gộp mã theo lô vật lý
-- ✅ Trên agent Windows, nhân viên bấm **"✅ Hoàn thành sọt"** khi đóng gói xong 1 thùng.
-- ✅ Server **gán `basket_id` cho từng mã** trong sọt (không chỉ đếm số).
-- ✅ Trang Admin tab **📦 Sọt** hiển thị tất cả sọt trong ngày, mỗi sọt kèm chi tiết
-  ĐVVC + nút **"📤 Bàn giao OPS"** riêng.
-- ✅ Bấm Bàn giao OPS cho 1 sọt → **chỉ post đúng mã của sọt đó** (query `WHERE
-  basket_id=X`, không lẫn với mã của sọt khác).
+- ✅ **Agent tự quản `current_basket_seq`** — mỗi POST `/scans` gửi kèm
+  `basket_seq`, server gán `basket_id` NGAY khi INSERT (không phụ thuộc timing,
+  không lẫn giữa nhiều agent, mã đúng sọt kể cả khi mất mạng).
+- ✅ Header agent hiện label **"🟢 Đang quét vào Sọt N"** — nhân viên biết rõ
+  đang gộp vào sọt nào.
+- ✅ Bấm **"✅ Hoàn thành sọt"** trên agent → chốt sọt hiện tại → **agent tự
+  tăng seq** cho sọt kế tiếp. Sync lại từ server khi restart app
+  (`GET /api/baskets/next`).
+- ✅ Server **gán `basket_id` cho từng mã** — sọt chứa danh sách mã chính xác.
+- ✅ Trang Admin tab **📦 Sọt** hiển thị tất cả sọt trong ngày:
+  - **Trạng thái OPS** (badge): ⏳ Chưa bàn giao · ✅ Đã bàn giao · ⚠ Bàn giao
+    1 phần · ❌ Thất bại
+  - **Mã phiên OPS** đã cấp cho từng ĐVVC (VD `SPX: MVECCEJIPX3K`)
+  - Nút **📤 Bàn giao OPS** (chưa bàn giao) hoặc **📋 Xem nhật ký** (đã done)
+  - Modal **Nhật ký sọt**: danh sách mã phiên + bảng mã lỗi + lý do CỤ THỂ
+    ("đã tồn tại", "OPS âm thầm loại", …) + nút Copy mã lỗi
 - ✅ **Backfill** basket_id cho sọt cũ chưa gán (nút trên Admin, idempotent).
 
 ### Auto import lên imv.ops (Playwright)
@@ -95,9 +105,12 @@ Mở:
 6. Trên máy quét Windows: cài `ScanEcomAgent.exe` + `config.ini` (xem
    [agent/README.md](agent/README.md)).
 
+- ✅ **Tự động Cập nhật & Auto-Build Agent trên Windows**: Agent tự động check version mới, tải `.zip` mã nguồn, giải nén đè vào `D:\Tool\agent\` (giữ nguyên config & queue DB trong `dist/`), tự kích hoạt `build_exe.ps1` build lại `.exe` và khởi chạy lại app mượt mà.
+- ✅ **Quản lý Release Agent từ Admin Web**: Admin có thể bấm nút **"⚡ Phát hành từ folder agent/"** hoặc upload file `.zip` thủ công để đẩy phiên bản mới xuống tất cả các máy Agent.
+
 ## Trang Admin `/admin`
 
-6 tab ngang:
+7 tab ngang:
 
 | Tab | Chức năng |
 |-----|-----------|
@@ -107,6 +120,7 @@ Mở:
 | 🔄 **Đồng bộ ngược** | Dán mã phiên OPS + list mã đã bàn giao thủ công → cập nhật DB |
 | 📦 **Sọt** | Bảng các sọt hôm nay, mỗi sọt có nút Bàn giao OPS + nút Backfill basket_id |
 | 📜 **Log OPS** | Log mọi lần post OPS (thành công/lỗi) + screenshot debug |
+| 🤖 **Quản lý Agent** | Phát hành nhanh bản Agent mới từ server hoặc upload file ZIP + xem lịch sử phiên bản |
 
 ## Cấu hình `.env` (tóm tắt)
 
@@ -167,7 +181,7 @@ Sửa/thêm trên trang Admin → tab **🚚 Đơn vị vận chuyển**. Sửa 
 
 | Method | Path | Mô tả |
 |--------|------|-------|
-| POST | `/api/scans` | Agent gửi mã (cần `X-API-Key`). 201 mới / 409 trùng |
+| POST | `/api/scans` | Agent gửi mã (`code`, `source_agent`, `basket_seq`). Cần `X-API-Key`. 201 mới / 409 trùng |
 | GET | `/api/scans?q=&carrier=&period=&limit=&offset=` | Danh sách (có `basket_seq`) |
 | GET | `/api/summary?period=` | Tổng + phân bố ĐVVC |
 | PATCH | `/api/scans/{id}` | Sửa ĐVVC / `code` (sửa mã cần `X-Delete-Password`) |
@@ -178,8 +192,9 @@ Sửa/thêm trên trang Admin → tab **🚚 Đơn vị vận chuyển**. Sửa 
 | GET | `/api/export/import-file/preview?...` | Preview trước khi xuất |
 | POST | `/api/reclassify` | Phân loại lại toàn bộ mã |
 | GET | `/api/carriers` · POST · PATCH `/{id}` · DELETE `/{id}` | Quản lý luật ĐVVC + config auto import |
-| POST | `/api/baskets/close?agent_name=` | Chốt 1 sọt (agent gọi khi bấm Hoàn thành sọt) |
-| GET | `/api/baskets?agent_name=&period=` | Danh sách sọt |
+| POST | `/api/baskets/close?agent_name=&basket_seq=` | Chốt sọt (agent gửi seq đang mở) |
+| GET | `/api/baskets?agent_name=&period=` | Danh sách sọt (kèm ops_status, ops_sessions, ops_errors) |
+| GET | `/api/baskets/next?agent_name=` | Trả seq kế tiếp — agent sync khi khởi động |
 | POST | `/api/baskets/backfill` | Gán basket_id cho sọt cũ (idempotent) |
 | POST | `/api/ops/import-now?carrier=&limit=&require_picked=` | Post 1 batch lên OPS (test) |
 | POST | `/api/ops/import-basket?basket_id=` | Bàn giao 1 sọt lên OPS |
@@ -188,7 +203,12 @@ Sửa/thêm trên trang Admin → tab **🚚 Đơn vị vận chuyển**. Sửa 
 | GET | `/api/ops/logs/{id}/screenshot` | Screenshot lỗi (PNG) |
 | DELETE | `/api/ops/logs/{id}` · `/api/ops/logs` | Xoá 1 / tất cả log |
 | DELETE | `/api/sessions/carrier/{name}` | Xoá tất cả phiên của 1 ĐVVC (khôi phục về chưa import) |
-| GET | `/api/stream` | SSE realtime (scan / update / delete / basket_close / ops_log / auto_import) |
+| GET | `/api/agent/version` | Kiểm tra phiên bản Agent mới nhất hiện tại |
+| GET | `/api/agent/download-source` | Tải file .zip mã nguồn Agent mới nhất |
+| GET | `/api/agent/releases` | Danh sách lịch sử các bản phát hành Agent |
+| POST | `/api/agent/releases/pack-current` | Nén thư mục agent/ trên server và phát hành bản mới |
+| POST | `/api/agent/releases/upload` | Upload file .zip mã nguồn Agent thủ công để phát hành |
+| GET | `/api/stream` | SSE realtime (scan / update / delete / basket_close / ops_log / auto_import / agent_release) |
 | GET | `/admin` | Trang Admin (Basic Auth: `admin/123456`) |
 
 ## Ghi chú kỹ thuật

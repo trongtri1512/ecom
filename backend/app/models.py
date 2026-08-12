@@ -182,3 +182,26 @@ class CarrierRule(Base):
             "ops_template_id": self.ops_template_id,
             "ops_partner": self.ops_partner,
         }
+
+
+class AgentRelease(Base):
+    """Model lưu trữ các bản phát hành (release) của Agent Windows."""
+    __tablename__ = "agent_releases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    version: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, index=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    changelog: Mapped[str] = mapped_column(String(2000), nullable=False, default="")
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "version": self.version,
+            "filename": self.filename,
+            "changelog": self.changelog,
+            "is_active": bool(self.is_active),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+

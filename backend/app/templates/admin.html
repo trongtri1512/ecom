@@ -200,6 +200,7 @@
     <button class="tab" data-tab="sync">🔄 Đồng bộ ngược</button>
     <button class="tab" data-tab="baskets">📦 Sọt <span class="badge-count" id="basketCount">0</span></button>
     <button class="tab" data-tab="logs">📜 Log OPS <span class="badge-count" id="logCount">0</span></button>
+    <button class="tab" data-tab="agent">🤖 Quản lý Agent</button>
   </nav>
 
   <main class="admin-shell">
@@ -420,6 +421,73 @@
       </div>
     </section>
 
+    <!-- ================ TAB: AGENT MANAGEMENT ================ -->
+    <section class="tabpane" data-pane="agent">
+      <div class="card" style="margin-bottom:20px;">
+        <div class="card-head">
+          <h3>🤖 Phiên bản Agent hiện tại & Tự động Cập nhật</h3>
+          <button class="btn btn-ghost" onclick="loadAgentReleases()">↻ Làm mới</button>
+        </div>
+        <div class="card-body">
+          <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
+            <div style="flex:1;min-width:280px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:16px;">
+              <h4 style="margin:0 0 10px 0;font-size:14px;color:var(--text);">📌 Bản phát hành đang hoạt động</h4>
+              <div style="font-size:24px;font-weight:700;color:var(--primary);" id="curAgentVer">v1.0.0</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:4px;" id="curAgentDate">Chưa có bản phát hành ZIP</div>
+              <div style="margin-top:12px;font-size:13px;color:var(--text);" id="curAgentChangelog"></div>
+              <div style="margin-top:12px;" id="curAgentLink"></div>
+            </div>
+
+            <div style="flex:1.5;min-width:320px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:16px;">
+              <h4 style="margin:0 0 10px 0;font-size:14px;color:var(--text);">⚡ 1. Phát hành nhanh từ thư mục agent/ server</h4>
+              <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">Tự động nén thư mục <code>agent/</code> trên server thành file <code>.zip</code> và phát hành ngay lập tức cho các máy Windows Scanner.</p>
+              <form id="formPackCurrent" style="display:flex;flex-direction:column;gap:10px;">
+                <div style="display:flex;gap:10px;">
+                  <input type="text" id="packVer" placeholder="Số phiên bản (VD: 1.1.0)" required style="width:160px;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--text);" />
+                  <input type="text" id="packLog" placeholder="Changelog / Ghi chú thay đổi" style="flex:1;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--text);" />
+                </div>
+                <div>
+                  <button type="submit" class="btn btn-primary" id="btnPackCurrent">⚡ Nén & Phát hành ngay</button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <div style="margin-top:20px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:16px;">
+            <h4 style="margin:0 0 10px 0;font-size:14px;color:var(--text);">📤 2. Upload file .zip mã nguồn Agent thủ công</h4>
+            <form id="formUploadAgent" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
+              <input type="text" id="uploadVer" placeholder="Số phiên bản (VD: 1.1.0)" required style="width:160px;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--text);" />
+              <input type="text" id="uploadLog" placeholder="Changelog" style="flex:1;min-width:200px;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--text);" />
+              <input type="file" id="uploadZip" accept=".zip" required style="font-size:13px;color:var(--text);" />
+              <button type="submit" class="btn" id="btnUploadAgent">📤 Upload & Phát hành</button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>📜 Lịch sử các bản phát hành Agent</h3>
+        </div>
+        <div class="card-body" style="padding:0;overflow-x:auto;">
+          <table class="compact-table" style="width:100%;min-width:800px;">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Phiên bản</th>
+                <th>Tên file ZIP</th>
+                <th>Ngày phát hành</th>
+                <th>Ghi chú (Changelog)</th>
+                <th>Trạng thái</th>
+              </tr>
+            </thead>
+            <tbody id="agentReleaseRows"></tbody>
+          </table>
+          <div id="agentReleaseEmpty" class="empty" hidden style="padding:32px;">Chưa có lịch sử phát hành nào.</div>
+        </div>
+      </div>
+    </section>
+
   </main>
 
   <!-- Modal xem screenshot -->
@@ -486,6 +554,7 @@
     if (name === "dashboard") loadKPI();
     if (name === "baskets") loadBaskets();
     if (name === "logs") loadLogs();
+    if (name === "agent") loadAgentReleases();
   }
   $$(".tab").forEach(t => t.addEventListener("click", () => goTab(t.dataset.tab)));
   $$(".shortcut").forEach(s => s.addEventListener("click", () => goTab(s.dataset.go)));
@@ -910,6 +979,99 @@
     }
   });
   $("#shotModal").addEventListener("click", () => { $("#shotModal").hidden = true; });
+
+  /* ================ AGENT RELEASES ================ */
+  async function loadAgentReleases() {
+    try {
+      const releases = await api("/api/agent/releases");
+      const rowsEl = $("#agentReleaseRows");
+      const emptyEl = $("#agentReleaseEmpty");
+      
+      if (!releases || releases.length === 0) {
+        rowsEl.innerHTML = "";
+        emptyEl.hidden = false;
+        $("#curAgentVer").textContent = "v1.0.0";
+        $("#curAgentDate").textContent = "Chưa phát hành ZIP nào";
+        $("#curAgentChangelog").textContent = "Máy Agent đang chạy mã nguồn mặc định.";
+        $("#curAgentLink").innerHTML = "";
+        return;
+      }
+
+      emptyEl.hidden = true;
+      const activeRel = releases.find(r => r.is_active) || releases[0];
+      $("#curAgentVer").textContent = "v" + activeRel.version;
+      $("#curAgentDate").textContent = "Phát hành: " + fmtDT(activeRel.created_at);
+      $("#curAgentChangelog").textContent = activeRel.changelog ? ("Ghi chú: " + activeRel.changelog) : "";
+      $("#curAgentLink").innerHTML = `<a href="/api/agent/download-source" class="btn btn-ghost" style="padding:4px 10px;font-size:12px;text-decoration:none;" target="_blank">⬇ Tải file zip (${esc(activeRel.filename)})</a>`;
+
+      let html = "";
+      releases.forEach(r => {
+        const badge = r.is_active 
+          ? '<span style="background:var(--success,#10b981);color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;">🟢 Đang hoạt động</span>'
+          : '<span style="background:var(--muted,#6b7280);color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;">⚪ Đã cũ</span>';
+
+        html += `<tr>
+          <td>${r.id}</td>
+          <td><strong style="color:var(--primary)">v${esc(r.version)}</strong></td>
+          <td><code>${esc(r.filename)}</code></td>
+          <td>${fmtDT(r.created_at)}</td>
+          <td>${esc(r.changelog || '—')}</td>
+          <td>${badge}</td>
+        </tr>`;
+      });
+      rowsEl.innerHTML = html;
+    } catch (err) {
+      toast("Lỗi tải Agent releases", err.message, "danger");
+    }
+  }
+
+  $("#formPackCurrent")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("#btnPackCurrent");
+    btn.disabled = true;
+    btn.textContent = "⏳ Đang đóng gói ZIP...";
+    try {
+      const fd = new FormData();
+      fd.append("version", $("#packVer").value);
+      fd.append("changelog", $("#packLog").value);
+      await api("/api/agent/releases/pack-current", { method: "POST", body: fd });
+      toast("Thành công", "Đã nén và phát hành bản Agent mới!", "success");
+      $("#packVer").value = "";
+      $("#packLog").value = "";
+      loadAgentReleases();
+    } catch (err) {
+      toast("Lỗi phát hành Agent", err.message, "danger");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "⚡ Nén & Phát hành ngay";
+    }
+  });
+
+  $("#formUploadAgent")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("#btnUploadAgent");
+    const file = $("#uploadZip").files[0];
+    if (!file) return;
+    btn.disabled = true;
+    btn.textContent = "⏳ Đang upload...";
+    try {
+      const fd = new FormData();
+      fd.append("version", $("#uploadVer").value);
+      fd.append("changelog", $("#uploadLog").value);
+      fd.append("file", file);
+      await api("/api/agent/releases/upload", { method: "POST", body: fd });
+      toast("Thành công", "Đã upload và phát hành bản Agent mới!", "success");
+      $("#uploadVer").value = "";
+      $("#uploadLog").value = "";
+      $("#uploadZip").value = "";
+      loadAgentReleases();
+    } catch (err) {
+      toast("Lỗi upload Agent", err.message, "danger");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "📤 Upload & Phát hành";
+    }
+  });
 
   /* ================ SSE ================ */
   try {

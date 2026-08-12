@@ -65,6 +65,155 @@ def _app_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
+# ----------------------------- Phiên bản & Auto Update -----------------------------
+CURRENT_VERSION = "1.0.0"
+
+
+def _agent_root_dir() -> str:
+    """Thư mục gốc chứa source code py (thường là parent của dist/ khi chạy dạng .exe).
+
+    - Khi chạy dạng .exe (sys.frozen = True): sys.executable nằm tại D:\Tool\agent\dist\ScanEcomAgent.exe.
+      Parent của dist là D:\Tool\agent (thư mục chứa source code py, build_exe.ps1...).
+    - Khi chạy .py bình thường: lấy thư mục chứa script (D:\Tool\agent).
+    """
+    if getattr(sys, "frozen", False):
+        exec_dir = os.path.dirname(sys.executable)
+        parent_dir = os.path.dirname(exec_dir)
+        if os.path.exists(os.path.join(parent_dir, "build_exe.ps1")) or os.path.exists(os.path.join(parent_dir, "scanner_agent.py")):
+            return parent_dir
+        return exec_dir
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _parse_version(v_str: str) -> tuple[int, ...]:
+    """Parse version string '1.1.0' -> (1, 1, 0) để so sánh."""
+    import re
+    parts = re.findall(r"\d+", str(v_str))
+    return tuple(int(p) for p in parts) if parts else (0,)
+
+
+def check_and_apply_update(server_url: str, api_key: str) -> bool:
+    """Kiểm tra và thực hiện cập nhật tự động mã nguồn từ server.
+
+    1. GET /api/agent/version -> Lấy latest_version.
+    2. So sánh nếu latest_version > CURRENT_VERSION:
+       - Tải file zip mã nguồn từ download_url.
+       - Giải nén đè trực tiếp các file code mới vào _agent_root_dir() (D:\Tool\agent\).
+         KHÔNG đụng vào dist/ (đảm bảo dist/config.ini và dist/queue.db nguyên vẹn).
+       - Sinh updater.bat tự động chạy build_exe.ps1 để build lại .exe vào dist\ScanEcomAgent.exe và bật lại.
+       - Thoát ứng dụng hiện tại.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    import zipfile
+
+    try:
+        url = f"{server_url}/api/agent/version"
+        headers = {"X-API-Key": api_key}
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code != 200:
+            return False
+
+        data = res.json()
+        latest_ver = data.get("latest_version", "1.0.0")
+        download_url = data.get("download_url")
+
+        if not download_url or _parse_version(latest_ver) <= _parse_version(CURRENT_VERSION):
+            return False
+
+        print(f"[AutoUpdate] Phát hiện phiên bản mới: v{latest_ver} (hiện tại v{CURRENT_VERSION}). Đang tải mã nguồn...")
+
+        dl_full_url = download_url if download_url.startswith("http") else f"{server_url}{download_url}"
+        z_res = requests.get(dl_full_url, headers=headers, timeout=60)
+        if z_res.status_code != 200:
+            print(f"[AutoUpdate] Lỗi tải zip: {z_res.status_code}")
+            return False
+
+        temp_dir = tempfile.mkdtemp(prefix="scanecom_update_")
+        zip_path = os.path.join(temp_dir, "agent_src.zip")
+        with open(zip_path, "wb") as f:
+            f.write(z_res.content)
+
+        extract_dir = os.path.join(temp_dir, "extracted")
+        os.makedirs(extract_dir, exist_ok=True)
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            zip_ref.extractall(extract_dir)
+
+        target_root = _agent_root_dir()
+        print(f"[AutoUpdate] Giải nén & ghi đè mã nguồn mới vào thư mục gốc: {target_root}")
+
+        for item in os.listdir(extract_dir):
+            src_item = os.path.join(extract_dir, item)
+            dst_item = os.path.join(target_root, item)
+
+            # Bỏ qua thư mục dist và file config/db của client
+            if item.lower() in ("dist", ".venv", "config.ini", "queue.db"):
+                continue
+
+            if os.path.isdir(src_item):
+                if os.path.exists(dst_item):
+                    shutil.rmtree(dst_item, ignore_errors=True)
+                shutil.copytree(src_item, dst_item)
+            else:
+                shutil.copy2(src_item, dst_item)
+
+        print("[AutoUpdate] Đã ghi đè mã nguồn thành công. Chuẩn bị kịch bản tự động build lại .exe...")
+
+        bat_path = os.path.join(tempfile.gettempdir(), "scanecom_updater.bat")
+        if getattr(sys, "frozen", False):
+            exec_path = sys.executable
+            bat_script = f"""@echo off
+chcp 65001 > nul
+echo [UPDATE] Dang cho ScanEcomAgent.exe dong...
+timeout /t 2 /nobreak > nul
+
+cd /d "{target_root}"
+
+echo [UPDATE] Dang tu dong build lai ScanEcomAgent.exe tu code source py moi...
+powershell -ExecutionPolicy Bypass -File build_exe.ps1
+
+if exist "{exec_path}" (
+    echo [UPDATE] Build thanh cong! Dang khoi dong lai Agent...
+    start "" "{exec_path}"
+) else if exist "dist\\ScanEcomAgent.exe" (
+    echo [UPDATE] Build thanh cong! Dang khoi dong lai Agent...
+    start "" "dist\\ScanEcomAgent.exe"
+) else (
+    echo [ERROR] Build that bai! Chay lai ban hien tai...
+    start "" "{exec_path}"
+)
+
+del "%~f0"
+"""
+        else:
+            py_executable = sys.executable
+            main_script = os.path.join(target_root, "scanner_agent.py")
+            bat_script = f"""@echo off
+chcp 65001 > nul
+echo [UPDATE] Dang cho Agent python dong...
+timeout /t 2 /nobreak > nul
+
+cd /d "{target_root}"
+echo [UPDATE] Dang khoi dong lai Agent Python v{latest_ver}...
+start "" "{py_executable}" "{main_script}"
+del "%~f0"
+"""
+
+        with open(bat_path, "w", encoding="utf-8") as f:
+            f.write(bat_script)
+
+        subprocess.Popen(["cmd.exe", "/c", bat_path], creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0)
+        print(f"[AutoUpdate] Đã khởi chạy script updater. Agent v{CURRENT_VERSION} tự thoát.")
+        sys.exit(0)
+        return True
+
+    except Exception as e:
+        print(f"[AutoUpdate] Lỗi nâng cấp: {e}")
+        return False
+
+
+
 HERE = _app_dir()
 CONFIG_PATH = os.path.join(HERE, "config.ini")
 QUEUE_DB = os.path.join(HERE, "queue.db")
@@ -498,7 +647,7 @@ class AgentWindow:
             print(f"[startup] Không sync được sọt (dùng seq=1): {e}")
 
         self.root = tk.Tk()
-        self.root.title("Scan Ecom — Máy quét")
+        self.root.title(f"Scan Ecom — Máy quét (v{CURRENT_VERSION})")
         self.root.geometry("980x720")
         self.root.configure(bg=self.BG)
         self.root.minsize(820, 600)
@@ -517,7 +666,7 @@ class AgentWindow:
         self.status_lbl = tk.Label(top, text="● Đang kết nối…", fg="#94a3b8", bg=self.PANEL,
                                    font=("Segoe UI", 10))
         self.status_lbl.pack(side="right", padx=12)
-        tk.Label(top, text=f"Máy: {cfg['name']}", fg="#94a3b8", bg=self.PANEL,
+        tk.Label(top, text=f"Máy: {cfg['name']} | v{CURRENT_VERSION}", fg="#94a3b8", bg=self.PANEL,
                  font=("Segoe UI", 9)).pack(side="right", padx=12)
 
         # ---- Thân: 2 cột (trái 1/3, phải 2/3) ----
@@ -1069,11 +1218,23 @@ def main():
     # Chạy nền: gửi lại mã offline.
     threading.Thread(target=sender.flush_loop, daemon=True).start()
 
+    # Chạy nền: kiểm tra tự động cập nhật mã nguồn & build lại .exe từ server.
+    def _auto_update_loop():
+        time.sleep(5)
+        while True:
+            try:
+                check_and_apply_update(cfg["url"], cfg["api_key"])
+            except Exception as ex:
+                print(f"[AutoUpdate Error] {ex}")
+            time.sleep(30 * 60)
+
+    threading.Thread(target=_auto_update_loop, daemon=True).start()
+
     # Nghe bàn phím toàn cục.
     listener = keyboard.Listener(on_press=catcher.on_press)
     listener.start()
 
-    print(f"Scanner Agent đang chạy. Server: {cfg['url']}  |  Máy: {cfg['name']}")
+    print(f"Scanner Agent v{CURRENT_VERSION} đang chạy. Server: {cfg['url']}  |  Máy: {cfg['name']}")
 
     # --- Điều phối GUI + Tray ---
     if HAS_GUI:

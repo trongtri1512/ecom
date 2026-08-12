@@ -60,3 +60,8 @@ except Exception:  # noqa: BLE001
 
 # Thư mục lưu log OPS (screenshot lỗi). Trong docker mount ra ngoài để không mất.
 OPS_LOGS_DIR = _get("OPS_LOGS_DIR", "/app/ops_logs")
+
+# Thư mục lưu các bản release ZIP của Agent.
+AGENT_RELEASES_DIR = _get("AGENT_RELEASES_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent_releases"))
+os.makedirs(AGENT_RELEASES_DIR, exist_ok=True)
+

@@ -48,6 +48,14 @@ powershell -ExecutionPolicy Bypass -File build_exe.ps1
 Script tự làm hết: **cài Python bằng winget nếu máy chưa có** → tạo môi trường →
 cài thư viện → build ra **`dist\ScanEcomAgent.exe`**.
 
+## 🔄 Cơ chế Tự động Cập nhật & Auto-Build (Windows)
+
+Agent tự động kiểm tra phiên bản mới từ Backend định kỳ (mỗi 30 phút và khi khởi động):
+
+1. **Phát hiện bản mới**: Gọi API `GET /api/agent/version`. Nếu có bản mới, Agent tự tải `.zip` mã nguồn mới từ server.
+2. **Giải nén đè code mới**: Tự giải nén đè các file `.py`, `.ps1`, `.bat` vào thư mục gốc `D:\Tool\agent\` (**bảo toàn 100%** file `dist\config.ini` và `dist\queue.db`).
+3. **Tự động build lại & Restart**: Chạy ngầm `updater.bat` kích hoạt `build_exe.ps1` build lại `dist\ScanEcomAgent.exe` và khởi động lại app. Nhân viên quét không cần thao tác gì.
+
 > Nếu winget vừa cài Python xong mà báo "chưa thấy Python": đóng PowerShell, mở
 > lại, chạy lệnh trên lần nữa (Windows cần nạp lại PATH).
 
