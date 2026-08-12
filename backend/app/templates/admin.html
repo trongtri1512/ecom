@@ -5,145 +5,417 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Scan Ecom — Admin</title>
   <link rel="stylesheet" href="/style.css" />
+  <style>
+    /* ================ ADMIN LAYOUT ================ */
+    body { background: #0b1220; }
+    .admin-shell { max-width: 1400px; margin: 0 auto; padding: 0 20px 40px; }
+
+    /* Header nhỏ gọn */
+    .admin-topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 20px; max-width: 1400px; margin: 0 auto;
+      border-bottom: 1px solid var(--line);
+    }
+    .admin-topbar .brand-wrap { display: flex; align-items: baseline; gap: 10px; }
+    .admin-topbar .brand-title { font-size: 17px; font-weight: 700; color: var(--text); }
+    .admin-topbar .brand-sub { font-size: 12px; color: var(--muted); }
+    .admin-topbar .actions { display: flex; gap: 8px; align-items: center; }
+
+    /* Tab bar ngang, sticky trên đầu */
+    .tabbar {
+      display: flex; gap: 4px; padding: 12px 20px 0;
+      max-width: 1400px; margin: 0 auto; border-bottom: 1px solid var(--line);
+      overflow-x: auto; scrollbar-width: none;
+    }
+    .tabbar::-webkit-scrollbar { display: none; }
+    .tab {
+      background: transparent; border: none; color: var(--muted); cursor: pointer;
+      padding: 10px 16px; font-size: 14px; font-weight: 500; white-space: nowrap;
+      border-bottom: 2px solid transparent; transition: color .15s, border-color .15s;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+    .tab .badge-count {
+      background: var(--panel-2); color: var(--muted); font-size: 11px;
+      padding: 1px 7px; border-radius: 999px; font-weight: 600;
+    }
+    .tab.active .badge-count { background: var(--primary); color: #fff; }
+
+    /* Content của mỗi tab */
+    .tabpane { display: none; padding-top: 24px; }
+    .tabpane.active { display: block; }
+
+    /* Card — bao mỗi khối chức năng */
+    .card {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+      margin-bottom: 16px; overflow: hidden;
+    }
+    .card-head {
+      display: flex; align-items: center; gap: 10px; justify-content: space-between;
+      padding: 14px 18px; border-bottom: 1px solid var(--line);
+    }
+    .card-head h3 { margin: 0; font-size: 15px; font-weight: 600; }
+    .card-head .desc { font-size: 12px; color: var(--muted); font-weight: 400; }
+    .card-body { padding: 16px 18px; }
+    .card-body.no-pad { padding: 0; }
+
+    /* KPI grid cho Dashboard */
+    .kpi-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    .kpi-card {
+      background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
+      padding: 14px 16px;
+    }
+    .kpi-card.hero { background: linear-gradient(135deg, var(--primary-d), var(--primary)); border: none; }
+    .kpi-card .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
+    .kpi-card.hero .label { color: rgba(255,255,255,.85); }
+    .kpi-card .value { font-size: 26px; font-weight: 800; color: var(--text); }
+    .kpi-card.hero .value { color: #fff; }
+
+    /* Shortcut buttons trên Dashboard */
+    .shortcut-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 10px;
+    }
+    .shortcut {
+      background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
+      padding: 14px 16px; cursor: pointer; text-align: left;
+      display: flex; align-items: center; gap: 12px;
+      transition: border-color .15s, transform .15s;
+      color: var(--text); font-family: inherit;
+    }
+    .shortcut:hover { border-color: var(--primary); transform: translateY(-1px); }
+    .shortcut .ico { font-size: 22px; }
+    .shortcut .txt { flex: 1; }
+    .shortcut .txt .t1 { font-weight: 600; font-size: 14px; }
+    .shortcut .txt .t2 { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    /* Bảng ĐVVC — bố cục 2 phần: nhận diện | auto import */
+    .carrier-table th, .carrier-table td { padding: 8px 10px; }
+    .col-group-1 { background: rgba(59,130,246,.06); }
+    .col-group-2 { background: rgba(34,197,94,.06); }
+    .group-header th {
+      font-size: 10px; text-transform: uppercase; color: var(--muted);
+      padding: 6px 10px; letter-spacing: .06em; font-weight: 700;
+      border-bottom: 1px solid var(--line);
+    }
+    .group-header th.grp-1 { background: rgba(59,130,246,.12); color: #60a5fa; }
+    .group-header th.grp-2 { background: rgba(34,197,94,.12); color: #4ade80; }
+    .carrier-table input[type="text"],
+    .carrier-table input:not([type]),
+    .carrier-table input[type="number"] {
+      background: var(--bg); border: 1px solid var(--line); color: var(--text);
+      padding: 6px 8px; border-radius: 6px; font-size: 13px; width: 100%; min-width: 60px;
+    }
+    .carrier-table input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--primary); cursor: pointer; }
+
+    /* Form thêm mới ĐVVC */
+    .add-form {
+      display: grid; gap: 8px; align-items: center;
+      grid-template-columns: 1.2fr 1.2fr 70px 70px 80px 80px 1.4fr auto;
+      padding: 12px 14px; background: var(--panel-2); border-radius: 8px;
+      margin-top: 12px;
+    }
+    .add-form input { background: var(--bg); border: 1px solid var(--line); color: var(--text);
+      padding: 8px 10px; border-radius: 6px; font-size: 13px; }
+    .add-form label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+
+    /* Row form (Test post + Đồng bộ ngược) — gọn hơn */
+    .row-form { display: grid; gap: 10px; align-items: end; }
+    .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; font-weight: 500; }
+    .field input, .field select, .field textarea {
+      background: var(--bg); border: 1px solid var(--line); color: var(--text);
+      padding: 9px 12px; border-radius: 8px; font-size: 14px; width: 100%;
+      font-family: inherit;
+    }
+    .field textarea { resize: vertical; font-family: Consolas, monospace; }
+    .field select { cursor: pointer; }
+    .field .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .checkbox-inline {
+      display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 14px;
+      padding: 9px 0; cursor: pointer;
+    }
+    .checkbox-inline input { width: 18px; height: 18px; accent-color: var(--primary); }
+
+    /* Log/basket rows dense */
+    .compact-table th, .compact-table td { padding: 8px 10px; font-size: 13px; }
+    .compact-table th { font-size: 11px; }
+
+    /* Badge */
+    .badge-lv {
+      display: inline-block; padding: 2px 10px; border-radius: 999px;
+      font-size: 11px; font-weight: 700;
+    }
+    .badge-lv.success { background: rgba(34,197,94,.15); color: #4ade80; }
+    .badge-lv.error { background: rgba(239,68,68,.18); color: #fca5a5; }
+    .badge-lv.info { background: rgba(148,163,184,.12); color: var(--muted); }
+
+    /* Modal styling nhẹ */
+    .modal-box-md {
+      background: var(--panel); padding: 20px; border-radius: 10px;
+      width: 600px; max-width: 90vw; border: 1px solid var(--line);
+      box-shadow: 0 20px 40px rgba(0,0,0,.5);
+    }
+    .modal-box-md h3 { margin: 0 0 14px; font-size: 15px; }
+
+    /* Small helpers */
+    .flex-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .flex-end { justify-content: flex-end; }
+    .spacer { flex: 1; }
+    .muted-text { color: var(--muted); font-size: 13px; line-height: 1.6; }
+    .status-line { margin-top: 12px; padding: 10px 14px; background: var(--panel-2);
+      border-radius: 8px; font-size: 13px; color: var(--muted); }
+    .status-line.ok { border-left: 3px solid var(--ok); color: var(--text); }
+    .status-line.err { border-left: 3px solid var(--danger); color: #fca5a5; }
+    .status-line.wait { border-left: 3px solid var(--warn); }
+
+    @media (max-width: 900px) {
+      .add-form { grid-template-columns: 1fr 1fr; }
+      .kpi-card .value { font-size: 22px; }
+    }
+  </style>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">⚙️ Scan Ecom Admin <span class="sub">Quản lý ĐVVC + Auto import OPS</span></div>
-    <div class="status">
-      <a href="/" class="btn btn-ghost" style="text-decoration:none">← Về trang quét</a>
+  <!-- ================ TOPBAR ================ -->
+  <header class="admin-topbar">
+    <div class="brand-wrap">
+      <span class="brand-title">⚙️ Scan Ecom Admin</span>
+      <span class="brand-sub">Quản trị hệ thống quét & bàn giao</span>
+    </div>
+    <div class="actions">
+      <span id="conn" class="dot dot-off" title="Trạng thái realtime"></span>
+      <span id="connText" style="color:var(--muted);font-size:12px;">Đang kết nối…</span>
+      <a href="/" class="btn btn-ghost" style="text-decoration:none;margin-left:12px">← Trang quét</a>
     </div>
   </header>
 
-  <section style="padding: 20px;">
-    <h3 style="margin: 0 0 8px;">Quy tắc nhận diện ĐVVC + Auto import OPS</h3>
-    <p style="color: var(--muted); font-size: 13px; line-height: 1.6; margin: 0 0 16px;">
-      Mỗi dòng = 1 <b>prefix</b> (chuỗi đầu mã vận đơn) gán cho 1 <b>ĐVVC</b>.
-      1 ĐVVC có thể có <b>nhiều prefix</b> — chỉ cần thêm nhiều dòng cùng "Tên ĐVVC".
-      Ưu tiên nhỏ hơn được xét trước. Cột <b>Auto</b> bật thì server sẽ tự upload
-      lên OPS khi đủ <b>Batch</b> đơn "đã lấy hàng" chưa import.
-    </p>
+  <!-- ================ TAB BAR ================ -->
+  <nav class="tabbar">
+    <button class="tab active" data-tab="dashboard">📊 Dashboard</button>
+    <button class="tab" data-tab="carriers">🚚 Đơn vị vận chuyển</button>
+    <button class="tab" data-tab="test">📤 Test post OPS</button>
+    <button class="tab" data-tab="sync">🔄 Đồng bộ ngược</button>
+    <button class="tab" data-tab="baskets">📦 Sọt <span class="badge-count" id="basketCount">0</span></button>
+    <button class="tab" data-tab="logs">📜 Log OPS <span class="badge-count" id="logCount">0</span></button>
+  </nav>
 
-    <div class="tablewrap" style="padding: 0;">
-      <table style="min-width: 1200px;">
-        <thead>
-          <tr>
-            <th>Tên ĐVVC</th>
-            <th>Prefix (đầu mã)</th>
-            <th>Ưu tiên</th>
-            <th>Auto</th>
-            <th>Batch</th>
-            <th>Template ID</th>
-            <th>Đối tác OPS (partner)</th>
-            <th></th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="adminRows"></tbody>
-      </table>
-    </div>
+  <main class="admin-shell">
 
-    <div class="carrier-add" style="margin-top: 20px; grid-template-columns: 1fr 1fr 90px 60px 90px 90px 1fr auto;">
-      <input id="nName" placeholder="Tên ĐVVC (vd: J&T)" />
-      <input id="nPrefix" placeholder="Prefix (vd: 8621)" />
-      <input id="nPriority" type="number" value="100" title="Ưu tiên" />
-      <label style="display:flex;align-items:center;gap:6px;color:var(--muted);">
-        <input id="nAuto" type="checkbox" style="width:18px;height:18px" /> Auto
-      </label>
-      <input id="nBatch" type="number" value="100" title="Batch" />
-      <input id="nTpl" type="number" value="2" title="Template ID" />
-      <input id="nPartner" placeholder="Tên đối tác trên OPS (vd: J&T Express VietNam)" />
-      <button id="btnAdd" class="btn btn-primary">➕ Thêm</button>
-    </div>
-
-    <div style="margin-top: 24px; display: flex; gap: 12px; justify-content: flex-end;">
-      <button id="btnSaveAll" class="btn btn-primary">💾 Lưu tất cả thay đổi</button>
-    </div>
-  </section>
-
-  <section style="padding: 0 20px 40px;">
-    <h3>Test post nhanh lên OPS</h3>
-    <p style="color: var(--muted); font-size: 13px; line-height: 1.6;">
-      Chọn 1 ĐVVC + số lượng đơn cần post. Bỏ tích "Chỉ đơn đã lấy hàng" để post
-      cả những đơn chưa tra trạng thái (chỉ dùng để TEST).
-    </p>
-    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-      <select id="testCarrier" style="min-width:180px;"><option value="">— chọn ĐVVC —</option></select>
-      <input id="testLimit" type="number" value="100" min="1" max="5000" style="width:100px;" placeholder="Số đơn" />
-      <label style="display:flex;align-items:center;gap:6px;color:var(--text);">
-        <input id="testPicked" type="checkbox" checked style="width:18px;height:18px" />
-        Chỉ đơn đã lấy hàng
-      </label>
-      <button id="btnPostNow" class="btn btn-danger">📤 Post ngay lên OPS</button>
-      <button id="btnResetCarrier" class="btn btn-ghost" style="color:var(--text);border:1px solid #475569;" title="Khôi phục trạng thái chờ import cho toàn bộ ĐVVC này">🔄 Xoá phiên ĐVVC</button>
-    </div>
-    <div id="testResult" style="margin-top: 14px; color: var(--muted); font-size: 14px;"></div>
-  </section>
-
-  <section style="padding: 0 20px 40px;">
-    <h3>Đồng bộ ngược mã bàn giao (Thủ công)</h3>
-    <p style="color: var(--muted); font-size: 13px; line-height: 1.6;">
-      Nếu có các kiện hàng đã được bàn giao thành công trên OPS nhưng hệ thống Local chưa cập nhật, bạn có thể dán mã phiên và danh sách các mã vận đơn vào đây để cập nhật ngược lại vào Database. Điều này giúp hệ thống biết mã đã xong và không gửi lại nữa.
-    </p>
-    <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-start;">
-      <div style="flex: 1; min-width: 250px; max-width: 300px;">
-        <input id="syncSessionId" type="text" placeholder="Nhập mã phiên (VD: SPXCCEM2QPM6)" style="width: 100%; margin-bottom: 10px;" />
-        <button id="btnSyncManual" class="btn btn-primary" style="width: 100%;">🔄 Đồng bộ ngược vào DB</button>
+    <!-- ================ TAB: DASHBOARD ================ -->
+    <section class="tabpane active" data-pane="dashboard">
+      <div class="card">
+        <div class="card-head">
+          <h3>📈 Tổng quan hôm nay <span class="desc">(theo giờ VN)</span></h3>
+          <button class="btn btn-ghost" id="btnRefreshDash">↻ Làm mới</button>
+        </div>
+        <div class="card-body">
+          <div class="kpi-grid" id="kpiGrid">
+            <div class="kpi-card hero">
+              <div class="label">Tổng đơn hôm nay</div>
+              <div class="value" id="kpiTotal">—</div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div style="flex: 2; min-width: 300px;">
-        <textarea id="syncCodes" placeholder="Dán danh sách mã vận đơn vào đây (mỗi mã 1 dòng hoặc cách nhau bằng dấu phẩy)..." style="width: 100%; height: 100px; resize: vertical; font-family: Consolas, monospace; font-size: 12px; padding: 10px; background: #0f172a; color: #e2e8f0; border: 1px solid var(--line); border-radius: 4px;"></textarea>
+
+      <div class="card">
+        <div class="card-head"><h3>⚡ Thao tác nhanh</h3></div>
+        <div class="card-body">
+          <div class="shortcut-grid">
+            <button class="shortcut" data-go="carriers">
+              <div class="ico">🚚</div>
+              <div class="txt"><div class="t1">Quản lý ĐVVC</div><div class="t2">Prefix + auto import theo hãng</div></div>
+            </button>
+            <button class="shortcut" data-go="test">
+              <div class="ico">📤</div>
+              <div class="txt"><div class="t1">Test post OPS</div><div class="t2">Chọn ĐVVC + số lượng, post ngay</div></div>
+            </button>
+            <button class="shortcut" data-go="sync">
+              <div class="ico">🔄</div>
+              <div class="txt"><div class="t1">Đồng bộ ngược</div><div class="t2">Dán mã phiên + danh sách mã đã bàn giao</div></div>
+            </button>
+            <button class="shortcut" data-go="baskets">
+              <div class="ico">📦</div>
+              <div class="txt"><div class="t1">Danh sách sọt</div><div class="t2">Xem & bàn giao lại sọt</div></div>
+            </button>
+            <button class="shortcut" data-go="logs">
+              <div class="ico">📜</div>
+              <div class="txt"><div class="t1">Log OPS</div><div class="t2">Xem lỗi + screenshot debug</div></div>
+            </button>
+          </div>
+        </div>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <section style="padding: 0 20px 40px;">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
-      <h3 style="margin:0;">Các sọt (Baskets) gần đây</h3>
-      <button id="btnRefreshBaskets" class="btn btn-ghost">↻ Làm mới</button>
-    </div>
-    <div class="tablewrap" style="padding:0;">
-      <table style="min-width:900px;">
-        <thead>
-          <tr>
-            <th>Thời gian chốt</th>
-            <th>Máy quét (Agent)</th>
-            <th>Tên sọt</th>
-            <th>Tổng số</th>
-            <th>Chi tiết ĐVVC</th>
-            <th>Thao tác</th>
-          </tr>
-        </thead>
-        <tbody id="basketRows"></tbody>
-      </table>
-    </div>
-    <div id="basketEmpty" class="empty" hidden>Chưa có sọt nào hôm nay.</div>
-  </section>
+    <!-- ================ TAB: CARRIERS ================ -->
+    <section class="tabpane" data-pane="carriers">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h3>Quy tắc nhận diện ĐVVC + Auto import OPS</h3>
+            <div class="desc">Mỗi dòng = 1 prefix. 1 ĐVVC có thể có nhiều prefix — thêm nhiều dòng cùng "Tên ĐVVC".</div>
+          </div>
+          <button id="btnSaveAll" class="btn btn-primary">💾 Lưu tất cả</button>
+        </div>
+        <div class="card-body no-pad" style="overflow-x:auto;">
+          <table class="carrier-table" style="width:100%;min-width:1100px;">
+            <thead>
+              <tr class="group-header">
+                <th class="grp-1" colspan="3">🔍 NHẬN DIỆN MÃ</th>
+                <th class="grp-2" colspan="4">📤 AUTO IMPORT OPS</th>
+                <th colspan="2"></th>
+              </tr>
+              <tr>
+                <th class="col-group-1">Tên ĐVVC</th>
+                <th class="col-group-1">Prefix</th>
+                <th class="col-group-1">Ưu tiên</th>
+                <th class="col-group-2">Auto</th>
+                <th class="col-group-2">Batch</th>
+                <th class="col-group-2">Template ID</th>
+                <th class="col-group-2">Đối tác OPS</th>
+                <th></th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="adminRows"></tbody>
+          </table>
+        </div>
+        <div class="card-body" style="border-top:1px solid var(--line);">
+          <div class="desc" style="margin-bottom:8px;font-weight:600;color:var(--text);">➕ Thêm ĐVVC mới</div>
+          <div class="add-form">
+            <input id="nName" placeholder="Tên ĐVVC (vd: J&T)" />
+            <input id="nPrefix" placeholder="Prefix (vd: 8621)" />
+            <input id="nPriority" type="number" value="100" title="Ưu tiên" />
+            <label><input id="nAuto" type="checkbox" /> Auto</label>
+            <input id="nBatch" type="number" value="100" title="Batch" />
+            <input id="nTpl" type="number" value="2" title="Template" />
+            <input id="nPartner" placeholder="Đối tác OPS" />
+            <button id="btnAdd" class="btn btn-primary">➕ Thêm</button>
+          </div>
+        </div>
+      </div>
+    </section>
 
-  <section style="padding: 20px;">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
-      <h3 style="margin:0;">Log OPS (mới nhất trước)</h3>
-      <button id="btnRefreshLogs" class="btn btn-ghost">↻ Làm mới</button>
-      <span class="spacer" style="flex:1"></span>
-      <button id="btnClearLogs" class="btn btn-danger">🗑️ Xoá tất cả log</button>
-    </div>
-    <div class="tablewrap" style="padding:0;">
-      <table style="min-width:900px;">
-        <thead>
-          <tr>
-            <th>Thời gian</th>
-            <th>Mức</th>
-            <th>ĐVVC</th>
-            <th>Số đơn</th>
-            <th>Mã phiên</th>
-            <th>Thông báo</th>
-            <th>Ảnh</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="logRows"></tbody>
-      </table>
-    </div>
-    <div id="logEmpty" class="empty" hidden>Chưa có log nào.</div>
-  </section>
+    <!-- ================ TAB: TEST POST ================ -->
+    <section class="tabpane" data-pane="test">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h3>Test post nhanh lên OPS</h3>
+            <div class="desc">Post 1 batch cho 1 ĐVVC bất kỳ. Dùng để kiểm cấu hình template + partner.</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="row-form" style="grid-template-columns: 1.2fr 120px 200px auto auto; align-items:end;">
+            <div class="field">
+              <label>Đơn vị vận chuyển</label>
+              <select id="testCarrier"><option value="">— chọn ĐVVC —</option></select>
+            </div>
+            <div class="field">
+              <label>Số đơn tối đa</label>
+              <input id="testLimit" type="number" value="100" min="1" max="5000" />
+            </div>
+            <div class="field">
+              <label>Điều kiện</label>
+              <label class="checkbox-inline" style="padding:0">
+                <input id="testPicked" type="checkbox" checked /> Chỉ đơn đã lấy hàng
+              </label>
+            </div>
+            <button id="btnPostNow" class="btn btn-danger">📤 Post ngay</button>
+            <button id="btnResetCarrier" class="btn btn-ghost" title="Xoá session_id của các đơn ĐVVC này để post lại từ đầu">🔄 Xoá phiên ĐVVC</button>
+          </div>
+          <div id="testResult" class="status-line" style="display:none;"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================ TAB: SYNC ================ -->
+    <section class="tabpane" data-pane="sync">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h3>Đồng bộ ngược mã bàn giao (thủ công)</h3>
+            <div class="desc">Trường hợp bạn tự tạo phiên trên OPS mà hệ thống Local chưa cập nhật — dán mã phiên + list mã vào đây.</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="row-form" style="grid-template-columns: 1fr 2fr; gap:16px;">
+            <div class="field">
+              <label>Mã phiên bàn giao (từ OPS)</label>
+              <input id="syncSessionId" placeholder="VD: MVECCEJIPX3K" />
+              <div class="hint">Copy chính xác mã trong khung đỏ trên OPS.</div>
+              <button id="btnSyncManual" class="btn btn-primary" style="width:100%;margin-top:12px;">🔄 Đồng bộ vào DB</button>
+            </div>
+            <div class="field">
+              <label>Danh sách mã vận đơn</label>
+              <textarea id="syncCodes" style="height:170px;" placeholder="SPXVN060062528558&#10;SPXVN069019237208&#10;SPXVN064871664248&#10;&#10;(mỗi dòng 1 mã hoặc phân tách bằng dấu phẩy)"></textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================ TAB: BASKETS ================ -->
+    <section class="tabpane" data-pane="baskets">
+      <div class="card">
+        <div class="card-head">
+          <h3>Các sọt hôm nay</h3>
+          <button id="btnRefreshBaskets" class="btn btn-ghost">↻ Làm mới</button>
+        </div>
+        <div class="card-body no-pad" style="overflow-x:auto;">
+          <table class="compact-table" style="width:100%;min-width:900px;">
+            <thead>
+              <tr>
+                <th>Thời gian chốt</th>
+                <th>Máy quét</th>
+                <th>Sọt</th>
+                <th style="text-align:right;">Tổng</th>
+                <th>Chi tiết ĐVVC</th>
+                <th style="text-align:center;">Thao tác</th>
+              </tr>
+            </thead>
+            <tbody id="basketRows"></tbody>
+          </table>
+          <div id="basketEmpty" class="empty" hidden style="padding:32px;">Chưa có sọt nào hôm nay.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================ TAB: LOGS ================ -->
+    <section class="tabpane" data-pane="logs">
+      <div class="card">
+        <div class="card-head">
+          <h3>Log OPS <span class="desc">(mới nhất trước)</span></h3>
+          <div class="flex-row">
+            <button id="btnRefreshLogs" class="btn btn-ghost">↻ Làm mới</button>
+            <button id="btnClearLogs" class="btn btn-danger">🗑️ Xoá tất cả log</button>
+          </div>
+        </div>
+        <div class="card-body no-pad" style="overflow-x:auto;">
+          <table class="compact-table" style="width:100%;min-width:960px;">
+            <thead>
+              <tr>
+                <th>Thời gian</th>
+                <th>Mức</th>
+                <th>ĐVVC</th>
+                <th style="text-align:right;">Đơn</th>
+                <th>Mã phiên</th>
+                <th>Thông báo</th>
+                <th>Ảnh</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="logRows"></tbody>
+          </table>
+          <div id="logEmpty" class="empty" hidden style="padding:32px;">Chưa có log nào.</div>
+        </div>
+      </div>
+    </section>
+
+  </main>
 
   <!-- Modal xem screenshot -->
   <div id="shotModal" class="modal" hidden style="cursor:zoom-out">
@@ -152,11 +424,11 @@
 
   <!-- Modal xem text chi tiết -->
   <div id="textModal" class="modal" hidden>
-    <div style="background:#1e293b; padding: 20px; border-radius: 8px; width: 600px; max-width: 90vw; border: 1px solid var(--line); box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
-      <h3 style="margin-top:0; color: #fff;">Chi tiết Thông báo</h3>
-      <textarea id="textModalContent" readonly style="width: 100%; height: 200px; background: #0f172a; color: #e2e8f0; border: 1px solid var(--line); padding: 10px; border-radius: 4px; font-family: Consolas, monospace; font-size: 13px; resize: vertical; line-height: 1.5;"></textarea>
-      <div style="text-align: right; margin-top: 15px;">
-        <button class="btn btn-ghost" onclick="document.getElementById('textModal').hidden=true" style="color: #fff; border: 1px solid #475569;">Đóng</button>
+    <div class="modal-box-md">
+      <h3>Chi tiết thông báo</h3>
+      <textarea id="textModalContent" readonly style="width:100%;height:200px;background:var(--bg);color:var(--text);border:1px solid var(--line);padding:10px;border-radius:6px;font-family:Consolas,monospace;font-size:13px;resize:vertical;line-height:1.5;"></textarea>
+      <div style="text-align:right;margin-top:14px;">
+        <button class="btn" onclick="document.getElementById('textModal').hidden=true">Đóng</button>
       </div>
     </div>
   </div>
@@ -164,10 +436,14 @@
   <div id="toasts" class="toasts"></div>
 
   <script>
+  /* ================ HELPERS ================ */
   const $ = (s) => document.querySelector(s);
-  const rowsEl = $("#adminRows");
+  const $$ = (s) => document.querySelectorAll(s);
 
-  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g,
+      c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
   function toast(t, m, k="") {
     const el = document.createElement("div");
     el.className = "toast " + k;
@@ -180,31 +456,61 @@
     if (!r.ok) throw new Error((await r.text()) || r.status);
     return r.headers.get("content-type")?.includes("json") ? r.json() : r;
   }
+  function fmtDT(iso) {
+    if (!iso) return "";
+    return new Date(iso).toLocaleString("vi-VN", {hour12: false});
+  }
 
+  /* ================ TAB SWITCHING ================ */
+  function goTab(name) {
+    $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
+    $$(".tabpane").forEach(p => p.classList.toggle("active", p.dataset.pane === name));
+    // Nhớ vào URL hash
+    if (location.hash !== "#" + name) location.hash = name;
+    // Auto load dữ liệu khi vào tab
+    if (name === "dashboard") loadKPI();
+    if (name === "baskets") loadBaskets();
+    if (name === "logs") loadLogs();
+  }
+  $$(".tab").forEach(t => t.addEventListener("click", () => goTab(t.dataset.tab)));
+  $$(".shortcut").forEach(s => s.addEventListener("click", () => goTab(s.dataset.go)));
+  // khởi động: đọc hash
+  window.addEventListener("hashchange", () => {
+    const t = location.hash.slice(1);
+    if (t) goTab(t);
+  });
+
+  /* ================ DASHBOARD ================ */
+  async function loadKPI() {
+    try {
+      const s = await api("/api/summary?period=day");
+      const order = s.carrier_order || Object.keys(s.by_carrier || {});
+      let html = `<div class="kpi-card hero"><div class="label">Tổng đơn hôm nay</div><div class="value">${s.total || 0}</div></div>`;
+      for (const c of order) {
+        html += `<div class="kpi-card"><div class="label">${esc(c)}</div><div class="value">${(s.by_carrier || {})[c] || 0}</div></div>`;
+      }
+      $("#kpiGrid").innerHTML = html;
+    } catch (e) {
+      $("#kpiGrid").innerHTML = `<div class="kpi-card"><div class="label">Lỗi</div><div class="value" style="font-size:14px;">${esc(String(e))}</div></div>`;
+    }
+  }
+  $("#btnRefreshDash").addEventListener("click", loadKPI);
+
+  /* ================ CARRIERS (ĐVVC) ================ */
+  const rowsEl = $("#adminRows");
   function rowHtml(r) {
     return `<tr data-id="${r.id}">
-      <td><input class="c-name" value="${esc(r.name)}" /></td>
-      <td><input class="c-prefix" value="${esc(r.prefix)}" /></td>
-      <td><input class="c-priority" type="number" value="${r.priority}" style="width:70px" /></td>
-      <td><input class="c-auto" type="checkbox" ${r.auto_import_enabled ? "checked" : ""} style="width:18px;height:18px" /></td>
-      <td><input class="c-batch" type="number" value="${r.auto_import_batch || 100}" style="width:80px" /></td>
-      <td><input class="c-tpl" type="number" value="${r.ops_template_id || 2}" style="width:80px" /></td>
-      <td><input class="c-partner" value="${esc(r.ops_partner || "")}" placeholder="vd: J&T Express VietNam" /></td>
-      <td><button class="btn btn-danger btn-post" title="Post 1 batch của ĐVVC này lên OPS ngay">📤 Post</button></td>
+      <td class="col-group-1"><input class="c-name" value="${esc(r.name)}" /></td>
+      <td class="col-group-1"><input class="c-prefix" value="${esc(r.prefix)}" /></td>
+      <td class="col-group-1"><input class="c-priority" type="number" value="${r.priority}" /></td>
+      <td class="col-group-2" style="text-align:center;"><input class="c-auto" type="checkbox" ${r.auto_import_enabled ? "checked" : ""} /></td>
+      <td class="col-group-2"><input class="c-batch" type="number" value="${r.auto_import_batch || 100}" /></td>
+      <td class="col-group-2"><input class="c-tpl" type="number" value="${r.ops_template_id || 2}" /></td>
+      <td class="col-group-2"><input class="c-partner" value="${esc(r.ops_partner || "")}" placeholder="vd: J&T Express VietNam" /></td>
+      <td><button class="btn btn-danger btn-post" title="Post ngay batch của ĐVVC này" style="padding:5px 10px;font-size:12px;">📤 Post</button></td>
       <td><button class="icon-btn c-del" title="Xoá luật">🗑️</button></td>
     </tr>`;
   }
-
-  async function load() {
-    const data = await api("/api/carriers");
-    const items = data.items || [];
-    rowsEl.innerHTML = items.map(rowHtml).join("");
-    // dropdown test
-    const names = [...new Set(items.map((r) => r.name))];
-    $("#testCarrier").innerHTML = '<option value="">— chọn ĐVVC —</option>' +
-      names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
-  }
-
   function rowPayload(tr) {
     return {
       name: tr.querySelector(".c-name").value.trim(),
@@ -216,7 +522,14 @@
       ops_partner: tr.querySelector(".c-partner").value.trim(),
     };
   }
-
+  async function loadCarriers() {
+    const data = await api("/api/carriers");
+    const items = data.items || [];
+    rowsEl.innerHTML = items.map(rowHtml).join("");
+    const names = [...new Set(items.map(r => r.name))];
+    $("#testCarrier").innerHTML = '<option value="">— chọn ĐVVC —</option>' +
+      names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
+  }
   $("#btnAdd").addEventListener("click", async () => {
     const p = {
       name: $("#nName").value.trim(),
@@ -227,16 +540,15 @@
       ops_template_id: parseInt($("#nTpl").value, 10) || 2,
       ops_partner: $("#nPartner").value.trim(),
     };
-    if (!p.name || !p.prefix) { toast("Thiếu", "Tên và prefix", "warn"); return; }
+    if (!p.name || !p.prefix) { toast("Thiếu", "Nhập Tên + Prefix", "warn"); return; }
     try {
-      await api("/api/carriers", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(p) });
+      await api("/api/carriers", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(p)});
       $("#nName").value = ""; $("#nPrefix").value = ""; $("#nPartner").value = "";
       $("#nAuto").checked = false;
-      await load();
+      await loadCarriers();
       toast("Đã thêm", `${p.name} (${p.prefix})`, "ok");
     } catch (e) { toast("Lỗi thêm", String(e), "danger"); }
   });
-
   rowsEl.addEventListener("click", async (e) => {
     const del = e.target.closest(".c-del");
     if (del) {
@@ -244,7 +556,7 @@
       const name = tr.querySelector(".c-name").value;
       if (!confirm(`Xoá luật "${name}"?`)) return;
       try {
-        await api(`/api/carriers/${tr.dataset.id}`, { method: "DELETE" });
+        await api(`/api/carriers/${tr.dataset.id}`, {method:"DELETE"});
         tr.remove();
         toast("Đã xoá", name, "warn");
       } catch (err) { toast("Lỗi xoá", String(err), "danger"); }
@@ -254,89 +566,89 @@
     if (post) {
       const tr = post.closest("tr");
       const p = rowPayload(tr);
-      // Lưu trước khi post (để lấy đúng cấu hình mới nhất)
       try {
-        await api(`/api/carriers/${tr.dataset.id}`, { method: "PATCH", headers: {"Content-Type": "application/json"}, body: JSON.stringify(p) });
+        await api(`/api/carriers/${tr.dataset.id}`, {method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify(p)});
       } catch (err) { toast("Lỗi lưu trước post", String(err), "danger"); return; }
       $("#testCarrier").value = p.name;
+      goTab("test");
       await postNow(p.name);
     }
   });
-
   $("#btnSaveAll").addEventListener("click", async () => {
     const trs = [...rowsEl.querySelectorAll("tr")];
     try {
       for (const tr of trs) {
         const p = rowPayload(tr);
         if (!p.name || !p.prefix) continue;
-        await api(`/api/carriers/${tr.dataset.id}`, { method: "PATCH", headers: {"Content-Type": "application/json"}, body: JSON.stringify(p) });
+        await api(`/api/carriers/${tr.dataset.id}`, {method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify(p)});
       }
       toast("Đã lưu", `${trs.length} luật`, "ok");
-      load();
+      loadCarriers();
     } catch (err) { toast("Lỗi lưu", String(err), "danger"); }
   });
 
+  /* ================ TEST POST ================ */
+  function setStatus(el, text, kind) {
+    el.style.display = "block";
+    el.className = "status-line " + (kind || "");
+    el.innerHTML = text;
+  }
   async function postNow(carrier) {
     if (!carrier) { toast("Chọn ĐVVC", "", "warn"); return; }
     const limit = parseInt($("#testLimit").value, 10) || 100;
     const requirePicked = $("#testPicked").checked;
-    $("#testResult").textContent = `⏳ Đang post ${carrier} (tối đa ${limit} đơn)... Playwright mở trình duyệt trên server, mất 15-30 giây.`;
+    setStatus($("#testResult"), `⏳ Đang post ${esc(carrier)} (tối đa ${limit} đơn)... Playwright chạy trên server, mất ~15-30s.`, "wait");
     try {
       const q = new URLSearchParams({ carrier, limit: String(limit), require_picked: String(requirePicked) });
       const r = await api("/api/ops/import-now?" + q.toString(), { method: "POST" });
       if (r.status === "ok") {
-        $("#testResult").innerHTML = `✅ <b>${r.count} đơn</b> đã post lên OPS. Mã phiên: <code>${esc(r.session_id)}</code> (từ OPS: <code>${esc(r.ops_session_id)}</code>)`;
+        setStatus($("#testResult"), `✅ <b>${r.count} đơn</b> đã post lên OPS. Mã phiên: <code>${esc(r.session_id)}</code> (từ OPS: <code>${esc(r.ops_session_id)}</code>)`, "ok");
         toast("Post OPS thành công", `${carrier}: ${r.count} đơn, mã ${r.session_id}`, "ok");
       } else if (r.status === "empty") {
-        $("#testResult").textContent = "⚠️ " + r.message;
+        setStatus($("#testResult"), "⚠️ " + esc(r.message), "");
         toast("Không có đơn", r.message, "warn");
       } else {
-        $("#testResult").innerHTML = `❌ Lỗi: <code>${esc(r.error)}</code>`;
+        setStatus($("#testResult"), `❌ Lỗi: <code>${esc(r.error)}</code>`, "err");
         toast("Post OPS lỗi", r.error, "danger");
       }
     } catch (err) {
-      $("#testResult").innerHTML = `❌ <code>${esc(String(err))}</code>`;
+      setStatus($("#testResult"), `❌ <code>${esc(String(err))}</code>`, "err");
       toast("Lỗi", String(err), "danger");
     }
   }
-
   $("#btnPostNow").addEventListener("click", () => postNow($("#testCarrier").value));
+  $("#btnResetCarrier").addEventListener("click", async () => {
+    const c = $("#testCarrier").value;
+    if (!c) { toast("Chú ý", "Hãy chọn 1 ĐVVC", "warn"); return; }
+    if (!confirm(`Xoá toàn bộ các phiên giao của ${c} khỏi hệ thống?\n(Các đơn hàng sẽ trở về trạng thái "chưa import")`)) return;
+    try {
+      const res = await api(`/api/sessions/carrier/${encodeURIComponent(c)}`, { method: "DELETE" });
+      toast("Thành công", res.message || "OK", "ok");
+      loadLogs(); loadBaskets();
+    } catch (e) { toast("Lỗi", String(e), "danger"); }
+  });
 
-  /* ------------------------- Đồng bộ ngược thủ công ------------------------- */
+  /* ================ SYNC MANUAL ================ */
   $("#btnSyncManual").addEventListener("click", async () => {
     const sessionId = $("#syncSessionId").value.trim();
     const rawCodes = $("#syncCodes").value;
-    if (!sessionId) {
-      toast("Thiếu thông tin", "Vui lòng nhập Mã phiên bàn giao", "warn");
-      return;
-    }
-    
-    // Tách mã bằng dấu xuống dòng hoặc dấu phẩy
+    if (!sessionId) { toast("Thiếu thông tin", "Nhập Mã phiên bàn giao", "warn"); return; }
     const codes = rawCodes.split(/[\n,]+/).map(c => c.trim()).filter(c => c);
-    if (codes.length === 0) {
-      toast("Thiếu thông tin", "Vui lòng dán danh sách mã vận đơn", "warn");
-      return;
-    }
-
-    if (!confirm(`Bạn sắp cập nhật ${codes.length} mã vận đơn vào phiên "${sessionId}". Tiếp tục?`)) return;
-
+    if (codes.length === 0) { toast("Thiếu thông tin", "Dán danh sách mã vận đơn", "warn"); return; }
+    if (!confirm(`Cập nhật ${codes.length} mã vận đơn vào phiên "${sessionId}"?`)) return;
     const btn = $("#btnSyncManual");
     const oldText = btn.innerHTML;
     btn.innerHTML = "⏳ Đang xử lý...";
     btn.disabled = true;
-
     try {
       const res = await api("/api/ops/sync-manual", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: {"Content-Type":"application/json"},
         body: JSON.stringify({ session_id: sessionId, codes })
       });
       if (res.status === "ok") {
-        toast("Thành công", `Đã cập nhật ${res.updated}/${res.total_submitted} mã có trong DB.`, "ok");
-        $("#syncSessionId").value = "";
-        $("#syncCodes").value = "";
-        loadLogs();
-  loadBaskets();
+        toast("Thành công", `Đã cập nhật ${res.updated}/${res.total_submitted} mã.`, "ok");
+        $("#syncSessionId").value = ""; $("#syncCodes").value = "";
+        loadLogs(); loadBaskets();
       } else {
         toast("Lỗi", res.message, "danger");
       }
@@ -348,27 +660,26 @@
     }
   });
 
-  /* ------------------------- Quản lý sọt (Baskets) ------------------------- */
+  /* ================ BASKETS ================ */
   async function loadBaskets() {
     try {
       const data = await api("/api/baskets?period=day");
       const items = data.items || [];
       $("#basketEmpty").hidden = items.length > 0;
-      
+      $("#basketCount").textContent = items.length;
       let html = "";
       for (const b of items) {
-        const dt = new Date(b.closed_at).toLocaleString("vi-VN", {hour12: false});
+        const dt = fmtDT(b.closed_at);
         const byCarrier = b.by_carrier || {};
-        const details = Object.entries(byCarrier).filter(x => x[1] > 0).map(x => `${x[0]}: ${x[1]}`).join(" | ") || "(rỗng)";
-        
+        const details = Object.entries(byCarrier).filter(x => x[1] > 0).map(x => `${x[0]}: ${x[1]}`).join(" · ") || "(rỗng)";
         html += `
           <tr>
             <td style="font-family:Consolas,monospace;font-size:12px;">${dt}</td>
             <td><b>${esc(b.source_agent)}</b></td>
             <td>${esc(b.name)}</td>
-            <td style="font-weight:bold;color:#4ade80;">${b.total}</td>
+            <td style="text-align:right;font-weight:700;color:#4ade80;">${b.total}</td>
             <td style="font-family:Consolas,monospace;font-size:12px;color:var(--muted);">${esc(details)}</td>
-            <td>
+            <td style="text-align:center;">
               <button class="btn btn-primary btn-post-basket" data-id="${b.id}" style="padding:4px 10px;font-size:12px;">📤 Bàn giao OPS</button>
             </td>
           </tr>
@@ -379,112 +690,78 @@
       toast("Không tải được ds sọt", String(e), "danger");
     }
   }
-
   $("#btnRefreshBaskets").addEventListener("click", loadBaskets);
-
   $("#basketRows").addEventListener("click", async (e) => {
     const btn = e.target.closest(".btn-post-basket");
     if (!btn) return;
-    
     const id = btn.dataset.id;
-    if (!confirm(`Xác nhận đẩy lại dữ liệu của sọt này lên hệ thống OPS?`)) return;
-    
+    if (!confirm("Đẩy lại dữ liệu của sọt này lên OPS?")) return;
     const oldText = btn.innerHTML;
-    btn.innerHTML = "⏳ Đang đẩy...";
-    btn.disabled = true;
-    
+    btn.innerHTML = "⏳"; btn.disabled = true;
     try {
-      const res = await api(`/api/ops/import-basket?basket_id=${id}`, { method: "POST" });
+      const res = await api(`/api/ops/import-basket?basket_id=${id}`, {method:"POST"});
       if (res.status === "done") {
         let msg = "";
         for (const r of (res.results || [])) {
-           if (r.status === "ok") msg += `✅ ${r.carrier}: Xong ${r.count} mã.\n`;
-           else msg += `❌ ${r.carrier}: ${r.error}\n`;
+          if (r.status === "ok") msg += `✅ ${r.carrier}: Xong ${r.count} mã.\n`;
+          else msg += `❌ ${r.carrier}: ${r.error}\n`;
         }
-        if (!msg) msg = "Không có mã nào cần đẩy (Sọt rỗng hoặc đã đẩy xong trước đó).";
-        alert(`KẾT QUẢ ĐẨY SỌT:\n\n${msg}`);
-        loadLogs();
-  loadBaskets(); // Cập nhật lại log OPS sau khi đẩy
+        if (!msg) msg = "Không có mã nào cần đẩy.";
+        alert("KẾT QUẢ:\n\n" + msg);
+        loadLogs(); loadBaskets();
       } else if (res.status === "empty") {
         alert(res.message);
       } else {
         toast("Lỗi", res.message || "Lỗi không xác định", "danger");
       }
-    } catch (err) {
-      toast("Lỗi", String(err), "danger");
-    } finally {
-      btn.innerHTML = oldText;
-      btn.disabled = false;
-    }
+    } catch (err) { toast("Lỗi", String(err), "danger"); }
+    finally { btn.innerHTML = oldText; btn.disabled = false; }
   });
 
-  /* ------------------------- Log OPS ------------------------- */
+  /* ================ LOGS ================ */
   const LEVEL_COLOR = {
-    success: {bg: "rgba(34,197,94,.15)", fg: "#4ade80", label: "✅ Thành công"},
-    error: {bg: "rgba(239,68,68,.18)", fg: "#fca5a5", label: "❌ Lỗi"},
-    info: {bg: "rgba(148,163,184,.12)", fg: "#94a3b8", label: "ℹ️ Info"},
+    success: {cls:"success", label:"✅ Thành công"},
+    error: {cls:"error", label:"❌ Lỗi"},
+    info: {cls:"info", label:"ℹ️ Info"},
   };
-  function fmtDT(iso) {
-    if (!iso) return "";
-    return new Date(iso).toLocaleString("vi-VN", {hour12: false});
-  }
   function logRowHtml(r) {
     const c = LEVEL_COLOR[r.level] || LEVEL_COLOR.info;
     const shotCell = r.has_screenshot
-      ? `<button class="btn-viewshot" data-id="${r.id}" style="background:#263449;color:#e2e8f0;border:1px solid var(--line);border-radius:6px;padding:3px 10px;cursor:pointer;">🖼 Xem</button>`
+      ? `<button class="btn-viewshot" data-id="${r.id}" style="background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;">🖼 Xem</button>`
       : "—";
     return `<tr data-id="${r.id}">
       <td style="white-space:nowrap;font-family:Consolas,monospace;font-size:12px;">${fmtDT(r.created_at)}</td>
-      <td><span style="background:${c.bg};color:${c.fg};padding:2px 10px;border-radius:999px;font-weight:700;font-size:12px;">${c.label}</span></td>
+      <td><span class="badge-lv ${c.cls}">${c.label}</span></td>
       <td>${esc(r.carrier)}</td>
-      <td style="text-align:right">${r.count || 0}</td>
+      <td style="text-align:right;">${r.count || 0}</td>
       <td style="font-family:Consolas,monospace;font-size:12px;">${esc(r.session_id || "")}</td>
-      <td class="log-msg-cell" data-msg="${esc(r.message)}" style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;" title="Bấm để xem/copy chi tiết toàn bộ mã lỗi">${esc(r.message)}</td>
+      <td class="log-msg-cell" data-msg="${esc(r.message)}" style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;" title="Bấm để xem chi tiết">${esc(r.message)}</td>
       <td>${shotCell}</td>
       <td><button class="btn-log-del icon-btn" title="Xoá dòng log">🗑️</button></td>
     </tr>`;
   }
-
   async function loadLogs() {
     try {
       const data = await api("/api/ops/logs?limit=200");
       const items = data.items || [];
       $("#logEmpty").hidden = items.length > 0;
+      $("#logCount").textContent = items.length;
       $("#logRows").innerHTML = items.map(logRowHtml).join("");
-    } catch (e) {
-      toast("Không tải được log", String(e), "danger");
-    }
+    } catch (e) { toast("Không tải được log", String(e), "danger"); }
   }
-
   $("#btnRefreshLogs").addEventListener("click", loadLogs);
-
   $("#btnClearLogs").addEventListener("click", async () => {
     if (!confirm("Xoá TẤT CẢ log OPS (kèm ảnh)? Không hoàn tác được.")) return;
     try {
-      await api("/api/ops/logs", { method: "DELETE" });
-      toast("Đã xoá", "Tất cả log OPS", "warn");
+      await api("/api/ops/logs", {method:"DELETE"});
+      toast("Đã xoá", "Tất cả log", "warn");
       loadLogs();
-  loadBaskets();
     } catch (e) { toast("Lỗi", String(e), "danger"); }
   });
-
-  $("#btnResetCarrier").addEventListener("click", async () => {
-    const c = $("#testCarrier").value;
-    if (!c) { toast("Chú ý", "Hãy chọn 1 ĐVVC", "warn"); return; }
-    if (!confirm(`Xóa toàn bộ các phiên giao của ${c} khỏi hệ thống?\n(Các đơn hàng sẽ trở về trạng thái "chưa import" để tạo phiên mới)`)) return;
-    try {
-      const res = await api(`/api/sessions/carrier/${encodeURIComponent(c)}`, { method: "DELETE" });
-      toast("Thành công", res.message, "ok");
-      loadLogs();
-  loadBaskets();
-    } catch (e) { toast("Lỗi", String(e), "danger"); }
-  });
-
   $("#logRows").addEventListener("click", async (e) => {
     const msgCell = e.target.closest(".log-msg-cell");
     if (msgCell) {
-      const msg = msgCell.getAttribute("data-msg") || "";
-      $("#textModalContent").value = msg;
+      $("#textModalContent").value = msgCell.getAttribute("data-msg") || "";
       $("#textModal").hidden = false;
       return;
     }
@@ -499,25 +776,33 @@
       const tr = del.closest("tr");
       if (!confirm("Xoá dòng log này?")) return;
       try {
-        await api(`/api/ops/logs/${tr.dataset.id}`, { method: "DELETE" });
+        await api(`/api/ops/logs/${tr.dataset.id}`, {method:"DELETE"});
         tr.remove();
       } catch (err) { toast("Lỗi", String(err), "danger"); }
     }
   });
-
   $("#shotModal").addEventListener("click", () => { $("#shotModal").hidden = true; });
 
-  // Realtime: có log mới -> reload
+  /* ================ SSE ================ */
   try {
     const es = new EventSource("/api/stream");
+    es.addEventListener("ping", () => {
+      $("#conn").className = "dot dot-on";
+      $("#connText").textContent = "Realtime";
+    });
     es.addEventListener("ops_log", loadLogs);
-    es.addEventListener("auto_import", loadLogs);
+    es.addEventListener("auto_import", () => { loadLogs(); loadKPI(); });
     es.addEventListener("auto_import_error", loadLogs);
+    es.addEventListener("basket_close", loadBaskets);
+    es.addEventListener("scan", loadKPI);
+    es.onerror = () => { $("#conn").className = "dot dot-off"; $("#connText").textContent = "Mất kết nối…"; };
   } catch {}
 
-  load().catch((e) => toast("Không tải được", String(e), "danger"));
-  loadLogs();
-  loadBaskets();
+  /* ================ INIT ================ */
+  // Đọc tab từ hash lúc load
+  const initTab = (location.hash.slice(1)) || "dashboard";
+  goTab(initTab);
+  loadCarriers().catch(e => toast("Không tải được ĐVVC", String(e), "danger"));
   </script>
 </body>
 </html>
