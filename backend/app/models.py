@@ -35,6 +35,8 @@ class Scan(Base):
     pickup_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     # Batch đã import lên imv.ops (rỗng = chưa import). Format: "YYYYMMDD-HHMMSS-CARRIER".
     session_id: Mapped[str] = mapped_column(String(64), nullable=False, default="", index=True)
+    # ID sọt (Basket) chứa mã này. NULL = chưa vào sọt. Gán khi user bấm "Hoàn thành sọt".
+    basket_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
 
     def as_dict(self) -> dict:
         return {

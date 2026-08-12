@@ -690,14 +690,31 @@ def ops_import_basket(
     if not basket:
         raise HTTPException(status_code=404, detail="Không tìm thấy sọt")
         
+    # CHỈ lấy mã CỦA CHÍNH sọt này (basket_id khớp) và chưa import.
+    # Không dùng scanned_at range vì mã mới quét cùng khoảng có thể lọt vào nhầm.
+    # Fallback theo scanned_at nếu là sọt CŨ (trước khi có basket_id).
     scans = db.scalars(
-        select(Scan)
-        .where(Scan.source_agent == basket.source_agent,
-               Scan.scanned_at > basket.started_at,
-               Scan.scanned_at <= basket.closed_at,
-               Scan.session_id == "")
+        select(Scan).where(Scan.basket_id == basket.id, Scan.session_id == "")
     ).all()
-    
+    if not scans:
+        # Fallback tương thích ngược: sọt cũ chưa được gán basket_id (trước khi có
+        # migration). Dùng khoảng thời gian + agent như logic cũ.
+        legacy = db.scalars(
+            select(Scan).where(
+                Scan.source_agent == basket.source_agent,
+                Scan.scanned_at > basket.started_at,
+                Scan.scanned_at <= basket.closed_at,
+                Scan.session_id == "",
+                Scan.basket_id.is_(None),
+            )
+        ).all()
+        if legacy:
+            # Gán basket_id cho mã cũ để lần sau query nhanh hơn.
+            for s in legacy:
+                s.basket_id = basket.id
+            db.commit()
+            scans = legacy
+
     if not scans:
         return {"status": "empty", "message": "Không có mã nào trong sọt này cần đẩy (đã đẩy hết hoặc sọt rỗng)."}
         
@@ -926,15 +943,20 @@ def close_basket(
     started_at = last_basket.closed_at if last_basket else frm
     next_seq = (last_basket.seq + 1) if last_basket else 1
 
-    # Đếm các mã quét bởi agent này trong khoảng (started_at, now].
-    rows = db.execute(
-        select(Scan.carrier, func.count())
-        .where(Scan.source_agent == agent_name,
-               Scan.scanned_at > started_at, Scan.scanned_at <= now)
-        .group_by(Scan.carrier)
+    # Lấy TẤT CẢ mã quét bởi agent này trong khoảng (started_at, now] CHƯA thuộc sọt.
+    # Basket phải CHỨA đúng danh sách mã trong sọt để sau này bàn giao đúng bộ.
+    scans_in_basket = db.scalars(
+        select(Scan).where(
+            Scan.source_agent == agent_name,
+            Scan.scanned_at > started_at,
+            Scan.scanned_at <= now,
+            Scan.basket_id.is_(None),  # chưa thuộc sọt nào
+        )
     ).all()
-    by_carrier = {c: int(n) for c, n in rows}
-    total = sum(by_carrier.values())
+    by_carrier: dict = {}
+    for s in scans_in_basket:
+        by_carrier[s.carrier] = by_carrier.get(s.carrier, 0) + 1
+    total = len(scans_in_basket)
 
     basket = Basket(
         seq=next_seq, source_agent=agent_name,
@@ -942,14 +964,18 @@ def close_basket(
         total=total, by_carrier_json=json.dumps(by_carrier, ensure_ascii=False),
     )
     db.add(basket)
+    db.flush()  # để có basket.id trước khi gán vào Scan
+    # Gán basket_id cho từng mã -> truy vấn "sọt X gồm mã nào" là SELECT WHERE basket_id=X.
+    for s in scans_in_basket:
+        s.basket_id = basket.id
     db.commit()
     db.refresh(basket)
     events.publish("basket_close", basket.as_dict())
-    
+
     # Kích hoạt chạy nền đồng bộ lên OPS tuần tự ngay lập tức
     import threading
     threading.Thread(target=_force_auto_import_all, daemon=True).start()
-    
+
     return basket.as_dict()
 
 

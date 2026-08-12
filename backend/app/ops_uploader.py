@@ -200,26 +200,12 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                 return {"ok": False, "error": "Không có quyền truy cập",
                         "screenshot_file": shot, "codes_entered": entered, "failed_codes": failed_codes}
 
-            # 8) Bấm BÀN GIAO 3PL hoặc BÀN GIAO
-            try:
-                clicked = _click_first(page, [
-                    "button:has-text('BÀN GIAO 3PL')",
-                    "button:has-text('Bàn giao 3PL')",
-                    "button:has-text('BÀN GIAO')",
-                    "button:has-text('Bàn giao')"
-                ])
-                if clicked:
-                    page.wait_for_timeout(2000)
-                    # Nếu có popup hỏi xác nhận bàn giao
-                    _click_first(page, [
-                        "button:has-text('XÁC NHẬN')",
-                        "button:has-text('Xác nhận')",
-                        "button:has-text('ĐỒNG Ý')",
-                        "button:has-text('Đồng ý')"
-                    ])
-                    page.wait_for_timeout(2000)
-            except Exception as click_err:
-                print(f"[scan_import] Lỗi khi bấm Bàn giao 3PL: {click_err}")
+            # 8) DỪNG ở đây — CHỈ tạo phiên (đã có mã bàn giao MVECCE...),
+            # KHÔNG bấm "BÀN GIAO 3PL". User sẽ tự bàn giao trên OPS khi thực tế
+            # hàng đã sẵn sàng bàn giao cho tài xế ĐVVC. Việc auto-bàn-giao trước
+            # đó gây ra tình trạng OPS ghi nhận bàn giao khi hàng chưa được đưa đi.
+            # (Nếu về sau muốn tự bàn giao, thêm option `handoff=True` vào hàm.)
+
             # 9) Lấy số lượng thực tế từ giao diện (bởi vì OPS có thể tự động loại bỏ mã trùng)
             actual_entered = entered
             try:

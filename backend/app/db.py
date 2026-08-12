@@ -47,6 +47,8 @@ def _run_light_migrations():
             to_add.append("ALTER TABLE scans ADD COLUMN pickup_checked_at TIMESTAMP NULL")
         if "session_id" not in cols:
             to_add.append("ALTER TABLE scans ADD COLUMN session_id VARCHAR(64) NOT NULL DEFAULT ''")
+        if "basket_id" not in cols:
+            to_add.append("ALTER TABLE scans ADD COLUMN basket_id INTEGER NULL")
     # --- carrier_rules (cấu hình auto import theo hãng) ---
     if "carrier_rules" in tables:
         cols = {c["name"] for c in inspector.get_columns("carrier_rules")}
