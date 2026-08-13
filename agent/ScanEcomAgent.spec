@@ -3,17 +3,24 @@
 # Đóng thành 1 file .exe, chạy ngầm (không cửa sổ console), chỉ hiện icon khay.
 # Build:  pyinstaller --noconfirm --clean ScanEcomAgent.spec
 
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+
 block_cipher = None
+
+# Bundle rõ ràng tcl/tk data + binaries. Trên 1 số máy Windows, PyInstaller
+# 6.11+ không tự bundle _tk_data -> exe crash "Tk data directory not found".
+_tk_datas = collect_data_files('tkinter', include_py_files=False)
+_tk_bins = collect_dynamic_libs('tkinter')
 
 a = Analysis(
     ['scanner_agent.py'],
     pathex=[],
-    binaries=[],
+    binaries=_tk_bins,
     # KHÔNG bundle logos vào .exe: để thư mục logos/ nằm CẠNH .exe (như config.ini)
     # để người dùng tự thêm/đổi logo mà không cần build lại.
     # BUNDLE VERSION: file version phải nằm TRONG .exe để _read_version() đọc được
     # (khớp GitHub Actions tag → auto-update mới compare đúng).
-    datas=[('VERSION', '.')],
+    datas=[('VERSION', '.')] + _tk_datas,
     # pystray/PIL nạp backend động; tkinter cho cửa sổ GUI -> khai báo để gom đủ.
     hiddenimports=['pystray._win32', 'PIL._tkinter_finder', 'tkinter', 'tkinter.ttk'],
     hookspath=[],

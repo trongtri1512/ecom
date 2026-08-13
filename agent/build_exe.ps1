@@ -56,7 +56,9 @@ $venvPy = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 Write-Step 3 "Cai thu vien + PyInstaller..."
 & $venvPy -m pip install --upgrade pip
 & $venvPy -m pip install -r requirements.txt
-& $venvPy -m pip install pyinstaller==6.11.1
+# PyInstaller 6.11.x co bug voi tkinter runtime hook (_tk_data khong tim thay)
+# tren mot so may Windows. 6.10.0 stable, da verify chay tot.
+& $venvPy -m pip install pyinstaller==6.10.0
 
 Write-Step 4 "Dong goi thanh 1 file .exe (chay ngam, chi icon khay)..."
 & $venvPy -m PyInstaller --noconfirm --clean ScanEcomAgent.spec
