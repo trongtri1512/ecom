@@ -943,37 +943,53 @@ class AgentWindow:
         self.kpi_grid.columnconfigure(1, weight=1)
 
         # Nút "Hoàn thành sọt" — hành động chính, nằm cuối cột giữa.
+        # Text hiện SỐ SỌT luôn để user thấy rõ đang chốt sọt nào.
         close_btn_wrap = tk.Frame(right, bg=self.BG)
         close_btn_wrap.pack(fill="x", pady=(12, 0))
-        tk.Button(close_btn_wrap, text="✅ Hoàn thành sọt", command=self._close_basket,
-                  bg="#16a34a", fg="white", relief="flat",
-                  font=("Segoe UI", 11, "bold"), padx=16, pady=8).pack(side="right")
+        self.btn_close_basket = tk.Button(
+            close_btn_wrap,
+            text=f"✅ Hoàn thành Sọt {self.current_basket_seq}",
+            command=self._close_basket,
+            bg="#16a34a", fg="white", relief="flat",
+            font=("Segoe UI", 11, "bold"), padx=16, pady=8)
+        self.btn_close_basket.pack(side="right")
 
-        # ---- CỘT PHẢI (mới): tab Bàn giao / Sọt / Mã phiên OPS ----
+        # ---- CỘT PHẢI: 2 tab-button toggle + Treeview + nút "Kết thúc ngày" gọn ----
         far_right = tk.Frame(body, bg=self.BG)
         far_right.grid(row=0, column=2, sticky="nsew", padx=(10, 0))
         tk.Label(far_right, text="BÀN GIAO & SỌT", fg="#94a3b8", bg=self.BG,
                  font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 4))
 
-        # Nút "Chốt sọt cuối ca" — pack side="bottom" TRƯỚC notebook để luôn ở
-        # đáy cột phải, tách xa nút chính -> giảm nhầm lẫn.
+        # Đáy cột: nút "Kết thúc ngày" gọn, align PHẢI (không full-width).
         eos_wrap = tk.Frame(far_right, bg=self.BG)
         eos_wrap.pack(side="bottom", fill="x", pady=(8, 0))
-        tk.Button(eos_wrap, text="🌙 Kết thúc ngày · Chốt sọt cuối ca",
+        tk.Button(eos_wrap, text="🌙 Kết thúc ngày",
                   command=self._close_basket_end_of_shift,
                   bg="#334155", fg="#cbd5e1", relief="flat",
-                  font=("Segoe UI", 10), pady=8).pack(fill="x")
+                  font=("Segoe UI", 9), padx=12, pady=5).pack(side="right")
 
-        self.notebook = ttk.Notebook(far_right)
-        self.notebook.pack(fill="both", expand=True)
+        # Tab-button toggle (2 nút "Sọt hôm nay" / "Mã phiên OPS")
+        tabbar = tk.Frame(far_right, bg=self.BG)
+        tabbar.pack(fill="x", pady=(0, 4))
+        self._active_tab = "baskets"
+        self.btn_tab_baskets = tk.Button(
+            tabbar, text="📦 Sọt hôm nay",
+            command=lambda: self._switch_tab("baskets"),
+            bg="#2563eb", fg="white", relief="flat",
+            font=("Segoe UI", 9, "bold"), padx=12, pady=6)
+        self.btn_tab_baskets.pack(side="left", padx=(0, 4))
+        self.btn_tab_sessions = tk.Button(
+            tabbar, text="📤 Mã phiên OPS",
+            command=lambda: self._switch_tab("sessions"),
+            bg="#1e293b", fg="#94a3b8", relief="flat",
+            font=("Segoe UI", 9), padx=12, pady=6)
+        self.btn_tab_sessions.pack(side="left")
 
-        # Tab 1: Sọt (mặc định)
-        self.baskets_tab = tk.Frame(self.notebook, bg=self.PANEL)
-        self.notebook.add(self.baskets_tab, text="Sọt hôm nay")
-
-        # Tab 2: Mã phiên OPS
-        self.sessions_tab = tk.Frame(self.notebook, bg=self.PANEL)
-        self.notebook.add(self.sessions_tab, text="Mã phiên OPS")
+        # 2 frame content, chỉ 1 cái hiện tại 1 thời điểm.
+        self.baskets_tab = tk.Frame(far_right, bg=self.PANEL)
+        self.baskets_tab.pack(fill="both", expand=True)
+        self.sessions_tab = tk.Frame(far_right, bg=self.PANEL)
+        # sessions_tab chưa pack — sẽ pack khi _switch_tab.
 
         # Style cho Treeview (Dark theme)
         style = ttk.Style()
@@ -1353,6 +1369,26 @@ class AgentWindow:
         log_text.insert("1.0", changelog or "(Không có ghi chú thay đổi)")
         log_text.config(state="disabled")
 
+    def _switch_tab(self, name: str):
+        """Chuyển giữa 2 frame content 'baskets' / 'sessions' (thay ttk.Notebook)."""
+        if name == self._active_tab:
+            return
+        if name == "baskets":
+            self.sessions_tab.pack_forget()
+            self.baskets_tab.pack(fill="both", expand=True)
+            self.btn_tab_baskets.config(bg="#2563eb", fg="white",
+                                        font=("Segoe UI", 9, "bold"))
+            self.btn_tab_sessions.config(bg="#1e293b", fg="#94a3b8",
+                                         font=("Segoe UI", 9))
+        else:
+            self.baskets_tab.pack_forget()
+            self.sessions_tab.pack(fill="both", expand=True)
+            self.btn_tab_sessions.config(bg="#2563eb", fg="white",
+                                         font=("Segoe UI", 9, "bold"))
+            self.btn_tab_baskets.config(bg="#1e293b", fg="#94a3b8",
+                                        font=("Segoe UI", 9))
+        self._active_tab = name
+
     # --- Sọt ---
     MIN_CODES_PER_BASKET = 10  # yêu cầu tối thiểu để chốt 1 sọt
 
@@ -1396,6 +1432,7 @@ class AgentWindow:
         self.current_basket_seq = closing_seq + 1
         new_seq = self.current_basket_seq
         self.current_basket_lbl.config(text=f"🟢 Đang quét vào Sọt {new_seq}")
+        self.btn_close_basket.config(text=f"✅ Hoàn thành Sọt {new_seq}")
 
         def do():
             try:
@@ -1405,6 +1442,8 @@ class AgentWindow:
                     self.current_basket_seq = closing_seq
                     self.root.after(0, lambda: self.current_basket_lbl.config(
                         text=f"🟢 Đang quét vào Sọt {closing_seq}"))
+                    self.root.after(0, lambda: self.btn_close_basket.config(
+                        text=f"✅ Hoàn thành Sọt {closing_seq}"))
                     self.root.after(0, lambda: self.listbox.insert(0,
                         f"{_now_vn('%H:%M:%S')}  ✖ Lỗi     Không chốt được sọt (mất mạng?) — đã hoàn tác"))
                     self.root.after(0, lambda: self.listbox.itemconfig(0, fg="#ef4444"))
