@@ -1020,10 +1020,17 @@ def _ensure_basket_for_agent(db: Session, agent_name: str, seq: int) -> int:
 
 @app.get("/api/baskets/next")
 def next_basket_seq(agent_name: str = Query(...), db: Session = Depends(get_db)):
-    """Trả số sọt kế tiếp cho agent (dùng lúc khởi động để sync).
+    """Trả số sọt agent nên đang quét vào (dùng lúc khởi động để sync).
 
-    Nếu hôm nay chưa có sọt nào -> next=1. Nếu sọt cuối là N -> next=N+1.
-    Agent lưu vào biến local, mỗi lần POST /api/scans sẽ gửi kèm giá trị này.
+    Logic:
+      - Chưa có sọt nào hôm nay -> current_seq = 1.
+      - Sọt cuối N đã chốt (total > 0) -> current_seq = N+1 (sọt kế tiếp).
+      - Sọt cuối N còn RỖNG (total == 0) -> có 2 khả năng:
+          a) Đã có mã quét vào sọt N (Scan.basket_id = N) nhưng chưa chốt
+             -> trả N để agent tiếp tục quét vào đúng sọt đó.
+          b) Chưa có mã nào -> vẫn trả N (khớp record rỗng đã tạo).
+      - `pending_total`: số mã đang chờ trong sọt trả về (để agent biết có
+        đang lỡ dở gì không).
     """
     frm, _ = period_range("day")
     last = db.scalar(
@@ -1032,8 +1039,19 @@ def next_basket_seq(agent_name: str = Query(...), db: Session = Depends(get_db))
             Basket.closed_at >= frm,
         ).order_by(Basket.seq.desc()).limit(1)
     )
-    next_seq = (last.seq + 1) if last else 1
-    return {"agent_name": agent_name, "current_seq": next_seq}
+    if not last:
+        return {"agent_name": agent_name, "current_seq": 1, "pending_total": 0}
+
+    if last.total > 0:
+        # Sọt cuối đã chốt (close_basket đã set total > 0) -> quét vào sọt kế.
+        return {"agent_name": agent_name, "current_seq": last.seq + 1, "pending_total": 0}
+
+    # total == 0: hoặc chưa quét mã nào, hoặc user vừa mở lại agent giữa sọt.
+    # Đếm số mã đã gán basket_id = last.id để biết thật sự.
+    pending = db.scalar(
+        select(func.count()).select_from(Scan).where(Scan.basket_id == last.id)
+    ) or 0
+    return {"agent_name": agent_name, "current_seq": last.seq, "pending_total": int(pending)}
 
 
 @app.post("/api/baskets/close")

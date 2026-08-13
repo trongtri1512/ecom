@@ -1057,8 +1057,31 @@ class AgentWindow:
                 self.listbox.itemconfig(0, fg="#3b82f6")
 
     # --- Sọt ---
+    MIN_CODES_PER_BASKET = 10  # yêu cầu tối thiểu để chốt 1 sọt
+
     def _close_basket(self):
-        """Bấm nút Hoàn thành sọt: chốt sọt hiện tại, TĂNG seq cho sọt kế tiếp."""
+        """Bấm nút Hoàn thành sọt: chốt sọt hiện tại, TĂNG seq cho sọt kế tiếp.
+
+        Chặn: sọt phải có >= MIN_CODES_PER_BASKET mã. Rỗng hoặc dưới ngưỡng ->
+        thông báo, KHÔNG chốt. Tránh việc lỡ tay bấm chốt khi vừa mở app hoặc
+        khi mới quét được vài mã.
+        """
+        # Ưu tiên số hiển thị trên UI (đã đồng bộ với server qua _pull_all).
+        current_total = 0
+        with self._summary_lock:
+            if self._summary:
+                current_total = int(self._summary.get("total") or 0)
+
+        if current_total < self.MIN_CODES_PER_BASKET:
+            from tkinter import messagebox
+            messagebox.showwarning(
+                "Chưa đủ mã để chốt sọt",
+                f"Sọt {self.current_basket_seq} hiện có {current_total} mã.\n"
+                f"Cần ít nhất {self.MIN_CODES_PER_BASKET} mã mới được chốt.\n\n"
+                f"Vui lòng tiếp tục quét thêm."
+            )
+            return
+
         closing_seq = self.current_basket_seq
         def do():
             result = self.state["sender"].close_basket(basket_seq=closing_seq)
