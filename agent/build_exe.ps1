@@ -106,6 +106,16 @@ Write-Step 3 "Cai thu vien + PyInstaller..."
 & $venvPy -m pip install "pyinstaller==6.6.0" "pyinstaller-hooks-contrib==2024.8"
 
 Write-Step 4 "Dong goi thanh 1 file .exe (chay ngam, chi icon khay)..."
+# Xoa env var TCL_LIBRARY / TK_LIBRARY neu co (thua huong tu MEIPASS cu
+# cua .exe da chay/crash). Neu con, PyInstaller hook _tkinter dung sai path
+# -> tcl.eval("info library") tra None -> build crash TypeError.
+$env:TCL_LIBRARY = $null
+$env:TK_LIBRARY = $null
+# Xoa MEIPASS cu de dam bao build lay tkinter tu Python install, khong tu
+# temp folder thua tu lan chay .exe truoc.
+Get-ChildItem "$env:TEMP" -Directory -Filter "_MEI*" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+Get-ChildItem "$env:TEMP\2" -Directory -Filter "_MEI*" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
 # Xoa cache PYZ va build folder de PyInstaller khong dung file cu.
 # --clean cua PyInstaller KHONG xoa het cache -> phai xoa thu cong.
 $pyiCache = Join-Path $env:LOCALAPPDATA "pyinstaller"
