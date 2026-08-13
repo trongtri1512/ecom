@@ -942,21 +942,28 @@ class AgentWindow:
         self.kpi_grid.columnconfigure(0, weight=1)
         self.kpi_grid.columnconfigure(1, weight=1)
 
-        # Nút hành động cuối cột giữa: "Hoàn thành sọt" (bình thường) + "Chốt cuối ca" (bypass < 10).
+        # Nút "Hoàn thành sọt" — hành động chính, nằm cuối cột giữa.
         close_btn_wrap = tk.Frame(right, bg=self.BG)
         close_btn_wrap.pack(fill="x", pady=(12, 0))
         tk.Button(close_btn_wrap, text="✅ Hoàn thành sọt", command=self._close_basket,
                   bg="#16a34a", fg="white", relief="flat",
                   font=("Segoe UI", 11, "bold"), padx=16, pady=8).pack(side="right")
-        tk.Button(close_btn_wrap, text="🌙 Chốt sọt cuối ca", command=self._close_basket_end_of_shift,
-                  bg="#334155", fg="#cbd5e1", relief="flat",
-                  font=("Segoe UI", 10), padx=12, pady=8).pack(side="right", padx=(0, 8))
 
         # ---- CỘT PHẢI (mới): tab Bàn giao / Sọt / Mã phiên OPS ----
         far_right = tk.Frame(body, bg=self.BG)
         far_right.grid(row=0, column=2, sticky="nsew", padx=(10, 0))
         tk.Label(far_right, text="BÀN GIAO & SỌT", fg="#94a3b8", bg=self.BG,
                  font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 4))
+
+        # Nút "Chốt sọt cuối ca" — pack side="bottom" TRƯỚC notebook để luôn ở
+        # đáy cột phải, tách xa nút chính -> giảm nhầm lẫn.
+        eos_wrap = tk.Frame(far_right, bg=self.BG)
+        eos_wrap.pack(side="bottom", fill="x", pady=(8, 0))
+        tk.Button(eos_wrap, text="🌙 Kết thúc ngày · Chốt sọt cuối ca",
+                  command=self._close_basket_end_of_shift,
+                  bg="#334155", fg="#cbd5e1", relief="flat",
+                  font=("Segoe UI", 10), pady=8).pack(fill="x")
+
         self.notebook = ttk.Notebook(far_right)
         self.notebook.pack(fill="both", expand=True)
 
