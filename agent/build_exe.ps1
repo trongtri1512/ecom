@@ -99,9 +99,11 @@ $venvPy = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 Write-Step 3 "Cai thu vien + PyInstaller..."
 & $venvPy -m pip install --upgrade pip
 & $venvPy -m pip install -r requirements.txt
-# PyInstaller 6.11.x co bug voi tkinter runtime hook (_tk_data khong tim thay)
-# tren mot so may Windows. 6.10.0 stable, da verify chay tot.
-& $venvPy -m pip install pyinstaller==6.10.0
+# PyInstaller 6.10+ co bug tren Python 3.12 runtime hook pyi_rth__tkinter:
+# no tim _MEIPASS/_tk_data khong thay -> exe crash.
+# PyInstaller 6.6.0 la ban stable cuoi khong dinh bug nay. Cai kem
+# pyinstaller-hooks-contrib PHIEN BAN TUONG UNG de dam bao tkinter hook chay dung.
+& $venvPy -m pip install "pyinstaller==6.6.0" "pyinstaller-hooks-contrib==2024.8"
 
 Write-Step 4 "Dong goi thanh 1 file .exe (chay ngam, chi icon khay)..."
 # Xoa cache PYZ va build folder de PyInstaller khong dung file cu.
