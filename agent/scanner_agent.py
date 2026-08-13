@@ -130,9 +130,9 @@ def _fmt_vn_time(iso_str: str, fmt: str = "%H:%M:%S") -> str:
 def _agent_root_dir() -> str:
     """Thư mục gốc chứa source code py (thường là parent của dist/ khi chạy dạng .exe).
 
-    - Khi chạy dạng .exe (sys.frozen = True): sys.executable nằm tại D:\Tool\agent\dist\ScanEcomAgent.exe.
-      Parent của dist là D:\Tool\agent (thư mục chứa source code py, build_exe.ps1...).
-    - Khi chạy .py bình thường: lấy thư mục chứa script (D:\Tool\agent).
+    - Khi chạy dạng .exe (sys.frozen = True): sys.executable nằm tại D:/Tool/agent/dist/ScanEcomAgent.exe.
+      Parent của dist là D:/Tool/agent (thư mục chứa source code py, build_exe.ps1...).
+    - Khi chạy .py bình thường: lấy thư mục chứa script (D:/Tool/agent).
     """
     if getattr(sys, "frozen", False):
         exec_dir = os.path.dirname(sys.executable)
@@ -179,9 +179,9 @@ def check_and_apply_update(server_url: str, api_key: str) -> bool:
     1. GET /api/agent/version -> Lấy latest_version.
     2. So sánh nếu latest_version > CURRENT_VERSION:
        - Tải file zip mã nguồn từ download_url.
-       - Giải nén đè trực tiếp các file code mới vào _agent_root_dir() (D:\Tool\agent\).
+       - Giải nén đè trực tiếp các file code mới vào _agent_root_dir() (D:/Tool/agent/).
          KHÔNG đụng vào dist/ (đảm bảo dist/config.ini và dist/queue.db nguyên vẹn).
-       - Sinh updater.bat tự động chạy build_exe.ps1 để build lại .exe vào dist\ScanEcomAgent.exe và bật lại.
+       - Sinh updater.bat tự động chạy build_exe.ps1 để build lại .exe vào dist/ScanEcomAgent.exe và bật lại.
        - Thoát ứng dụng hiện tại.
     """
     import shutil
@@ -315,7 +315,8 @@ def check_and_apply_update(server_url: str, api_key: str) -> bool:
             # LƯU Ý: taskkill /F /IM chỉ giết đúng file .exe cùng tên. Vòng lặp
             # để chắc chắn KHÔNG có instance nào của agent còn sót — kể cả các
             # bản mở trước đó cũng bị dọn (tránh multi-instance chồng nhau).
-            bat_script = f"""@echo off
+            # rf""" = raw + f-string: mọi \ giữ nguyên, không escape.
+            bat_script = rf"""@echo off
 chcp 65001 > nul
 echo [UPDATE] Dang dung TAT CA instance {exec_name} cu (PID hien tai: {current_pid})...
 :killloop
@@ -332,14 +333,14 @@ cd /d "{target_root}"
 echo [UPDATE] Dang tu dong build lai {exec_name} tu code source py moi...
 powershell -ExecutionPolicy Bypass -File build_exe.ps1
 if errorlevel 1 (
-    echo [ERROR] Build that bai. Khong khoi dong lai — tranh chay ban cu tren code moi.
+    echo [ERROR] Build that bai. Khong khoi dong lai. Kiem update.log de biet chi tiet.
     pause
     exit /b 1
 )
 
-REM Build ra tai "{target_root}\dist\{exec_name}". Nhung .exe GOC dang chay
-REM co the o cho khac (VD user chep .exe qua may khac, dat o D:\Tool\...).
-REM Copy .exe vua build DE LEN dung cho file goc de restart chay ban moi.
+REM Build ra tai target_root\dist\exec_name. Nhung .exe GOC dang chay co the
+REM o cho khac (VD user chep .exe portable). Copy .exe vua build DE LEN dung
+REM cho file goc de restart chay ban moi.
 set "BUILT_EXE={target_root}\dist\{exec_name}"
 set "ORIG_EXE={exec_path}"
 
