@@ -34,13 +34,48 @@ function Get-Python312 {
 Write-Step 1 "Kiem tra Python 3.12..."
 $pyArgs = Get-Python312
 if (-not $pyArgs) {
-    Write-Host "    Chua co Python 3.12. Dang cai bang winget (BAT BUOC 3.12, khong dung 3.13)..." -ForegroundColor Yellow
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        Write-Host "    [LOI] May khong co winget (App Installer)." -ForegroundColor Red
-        Write-Host "    Cach khac: tai Python 3.12 tai https://www.python.org/downloads/release/python-3128/ (nho tick 'Add to PATH')." -ForegroundColor Red
+    Write-Host "    Chua co Python 3.12. Tu cai now..." -ForegroundColor Yellow
+
+    $installed = $false
+
+    # Cach A: winget (Windows 10 22H2+ / 11).
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Host "    Thu winget..." -ForegroundColor Yellow
+        winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements
+        if ($LASTEXITCODE -eq 0) { $installed = $true }
+    }
+
+    # Cach B: tai .exe tu python.org (Windows Server / Windows cu khong co winget).
+    if (-not $installed) {
+        Write-Host "    Khong co winget hoac winget fail -> tai installer tu python.org..." -ForegroundColor Yellow
+        $pyExe = "$env:TEMP\python-3.12.8-amd64.exe"
+        $pyUrl = "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe"
+        try {
+            Invoke-WebRequest -Uri $pyUrl -OutFile $pyExe -UseBasicParsing
+            Write-Host "    Cai Python 3.12.8 silent (co Add to PATH, Python Launcher)..." -ForegroundColor Yellow
+            $proc = Start-Process -Wait -PassThru -FilePath $pyExe -ArgumentList @(
+                "/quiet",
+                "InstallAllUsers=1",
+                "PrependPath=1",
+                "Include_launcher=1",
+                "Include_pip=1",
+                "Include_test=0",
+                "Include_doc=0"
+            )
+            if ($proc.ExitCode -eq 0) { $installed = $true }
+            else { Write-Host "    Installer ExitCode = $($proc.ExitCode)" -ForegroundColor Red }
+        } catch {
+            Write-Host "    [LOI] Khong tai duoc installer: $_" -ForegroundColor Red
+        }
+    }
+
+    if (-not $installed) {
+        Write-Host "    [LOI] Khong cai duoc Python 3.12 tu dong." -ForegroundColor Red
+        Write-Host "    Cai tay: https://www.python.org/downloads/release/python-3128/" -ForegroundColor Red
+        Write-Host "    Nho tick 'Add python.exe to PATH' khi cai." -ForegroundColor Red
         exit 1
     }
-    winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements
+
     # Nap lai PATH cho phien hien tai de thay python vua cai.
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
                 [System.Environment]::GetEnvironmentVariable("Path", "User")
