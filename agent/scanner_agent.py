@@ -269,17 +269,31 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if exist "dist\\{exec_name}" (
-    echo [UPDATE] Build thanh cong! Dang khoi dong lai Agent...
-    start "" "dist\\{exec_name}"
-) else if exist "{exec_path}" (
-    echo [UPDATE] Fallback exec_path...
-    start "" "{exec_path}"
-) else (
-    echo [ERROR] Khong tim thay file .exe sau build. Kiem tra thu cong.
+REM Build ra tai "{target_root}\dist\{exec_name}". Nhung .exe GOC dang chay
+REM co the o cho khac (VD user chep .exe qua may khac, dat o D:\Tool\...).
+REM Copy .exe vua build DE LEN dung cho file goc de restart chay ban moi.
+set "BUILT_EXE={target_root}\dist\{exec_name}"
+set "ORIG_EXE={exec_path}"
+
+if not exist "%BUILT_EXE%" (
+    echo [ERROR] Khong tim thay .exe sau build: %BUILT_EXE%
     pause
     exit /b 1
 )
+
+if /I not "%BUILT_EXE%"=="%ORIG_EXE%" (
+    echo [UPDATE] Copy .exe moi de len file goc: %ORIG_EXE%
+    copy /Y "%BUILT_EXE%" "%ORIG_EXE%" >NUL
+    if errorlevel 1 (
+        echo [ERROR] Copy that bai. Khoi dong ban build tam thoi tai %BUILT_EXE%.
+        start "" "%BUILT_EXE%"
+        del "%~f0"
+        exit /b 0
+    )
+)
+
+echo [UPDATE] Build thanh cong! Dang khoi dong lai Agent tai %ORIG_EXE%...
+start "" "%ORIG_EXE%"
 
 del "%~f0"
 """
