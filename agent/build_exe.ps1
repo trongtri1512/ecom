@@ -1,8 +1,12 @@
-﻿# ============================================================
-#  build_exe.ps1  —  Tự cài Python (nếu thiếu) rồi build ScanEcomAgent.exe
-#  Chạy 1 lệnh trong PowerShell (đứng tại thư mục agent):
+# ============================================================
+#  build_exe.ps1  -  Tu cai Python (neu thieu) roi build ScanEcomAgent.exe
+#  Chay 1 lenh trong PowerShell (dung tai thu muc agent):
 #      powershell -ExecutionPolicy Bypass -File build_exe.ps1
-#  Hoặc nhấp chuột phải build_exe.ps1 -> "Run with PowerShell".
+#  Hoac nhap chuot phai build_exe.ps1 -> "Run with PowerShell".
+#
+#  LUU Y: file nay chi dung ASCII (khong dau) de tuong thich moi PowerShell
+#  version (5.1 doc script khong BOM = ANSI; giu ASCII de khong bao gio loi
+#  encoding).
 # ============================================================
 
 $ErrorActionPreference = "Stop"
@@ -10,10 +14,10 @@ Set-Location -Path $PSScriptRoot
 
 function Write-Step($n, $msg) { Write-Host "`n[$n] $msg" -ForegroundColor Cyan }
 
-# --- Tìm Python; nếu chưa có thì cài qua winget ---
+# --- Tim Python; neu chua co thi cai qua winget ---
 function Get-PythonCmd {
-    # Ưu tiên 'py' (Python Launcher) vì luôn có sau khi cài Python trên Windows,
-    # kể cả khi 'python' KHÔNG được thêm vào PATH.
+    # Uu tien 'py' (Python Launcher) vi luon co sau khi cai Python tren Windows,
+    # ke ca khi 'python' KHONG duoc them vao PATH.
     foreach ($c in @("py", "python")) {
         try {
             $v = & $c --version 2>&1
@@ -23,49 +27,49 @@ function Get-PythonCmd {
     return $null
 }
 
-Write-Step 1 "Kiểm tra Python..."
+Write-Step 1 "Kiem tra Python..."
 $py = Get-PythonCmd
 if (-not $py) {
-    Write-Host "    Chưa có Python. Đang cài bằng winget..." -ForegroundColor Yellow
+    Write-Host "    Chua co Python. Dang cai bang winget..." -ForegroundColor Yellow
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        Write-Host "    [LỖI] Máy không có winget (App Installer)." -ForegroundColor Red
-        Write-Host "    Cách khác: tải Python tại https://www.python.org/downloads/ (nhớ tick 'Add to PATH')." -ForegroundColor Red
+        Write-Host "    [LOI] May khong co winget (App Installer)." -ForegroundColor Red
+        Write-Host "    Cach khac: tai Python tai https://www.python.org/downloads/ (nho tick 'Add to PATH')." -ForegroundColor Red
         exit 1
     }
     winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements
-    # Nạp lại PATH cho phiên hiện tại để thấy python vừa cài.
+    # Nap lai PATH cho phien hien tai de thay python vua cai.
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
                 [System.Environment]::GetEnvironmentVariable("Path", "User")
     $py = Get-PythonCmd
     if (-not $py) {
-        Write-Host "    Đã cài Python nhưng phiên PowerShell này chưa thấy." -ForegroundColor Yellow
-        Write-Host "    ĐÓNG PowerShell, MỞ LẠI, rồi chạy lại script này." -ForegroundColor Yellow
+        Write-Host "    Da cai Python nhung phien PowerShell nay chua thay." -ForegroundColor Yellow
+        Write-Host "    DONG PowerShell, MO LAI, roi chay lai script nay." -ForegroundColor Yellow
         exit 1
     }
 }
 Write-Host "    OK: $(& $py --version)" -ForegroundColor Green
 
-Write-Step 2 "Tạo môi trường ảo (.venv)..."
+Write-Step 2 "Tao moi truong ao (.venv)..."
 & $py -m venv .venv
 $venvPy = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 
-Write-Step 3 "Cài thư viện + PyInstaller..."
+Write-Step 3 "Cai thu vien + PyInstaller..."
 & $venvPy -m pip install --upgrade pip
 & $venvPy -m pip install -r requirements.txt
 & $venvPy -m pip install pyinstaller==6.11.1
 
-Write-Step 4 "Đóng gói thành 1 file .exe (chạy ngầm, chỉ icon khay)..."
+Write-Step 4 "Dong goi thanh 1 file .exe (chay ngam, chi icon khay)..."
 & $venvPy -m PyInstaller --noconfirm --clean ScanEcomAgent.spec
 
 $exe = Join-Path $PSScriptRoot "dist\ScanEcomAgent.exe"
 if (Test-Path $exe) {
     Write-Host "`n==================================================" -ForegroundColor Green
     Write-Host " XONG! File EXE: $exe" -ForegroundColor Green
-    Write-Host " Bước tiếp: chép ScanEcomAgent.exe + config.ini vào 1 thư mục," -ForegroundColor Green
-    Write-Host " sửa config.ini (url, api_key), rồi nhấp đúp để chạy." -ForegroundColor Green
-    Write-Host " Muốn tự chạy khi mở máy: chạy install_autostart.bat" -ForegroundColor Green
+    Write-Host " Buoc tiep: chep ScanEcomAgent.exe + config.ini vao 1 thu muc," -ForegroundColor Green
+    Write-Host " sua config.ini (url, api_key), roi nhap dup de chay." -ForegroundColor Green
+    Write-Host " Muon tu chay khi mo may: chay install_autostart.bat" -ForegroundColor Green
     Write-Host "==================================================" -ForegroundColor Green
 } else {
-    Write-Host "`n[LỖI] Không thấy file .exe sau khi build. Xem log phía trên." -ForegroundColor Red
+    Write-Host "`n[LOI] Khong thay file .exe sau khi build. Xem log phia tren." -ForegroundColor Red
     exit 1
 }
