@@ -66,7 +66,32 @@ def _app_dir():
 
 
 # ----------------------------- Phiên bản & Auto Update -----------------------------
-CURRENT_VERSION = "1.0.0"
+def _read_version() -> str:
+    """Đọc số version từ file VERSION (nguồn duy nhất, khớp GitHub Actions tag).
+
+    Thứ tự tìm:
+      1. sys._MEIPASS/VERSION — khi chạy .exe PyInstaller (bundle qua spec).
+      2. dirname(__file__)/VERSION — khi chạy trực tiếp `python scanner_agent.py`.
+      3. _app_dir()/VERSION — fallback (thư mục cạnh .exe).
+    Thiếu file → 0.0.0 (chắc chắn được coi là cũ, tự update lần check kế).
+    """
+    candidates = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(os.path.join(meipass, "VERSION"))
+    candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION"))
+    candidates.append(os.path.join(_app_dir(), "VERSION"))
+    for p in candidates:
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    return f.read().strip() or "0.0.0"
+            except Exception:
+                pass
+    return "0.0.0"
+
+
+CURRENT_VERSION = _read_version()
 
 
 def _agent_root_dir() -> str:
@@ -865,8 +890,11 @@ class AgentWindow:
 
         if not s:
             return
-        
-        seq = s.get("seq", 1)
+
+        # Agent-side seq là nguồn thống nhất — server đôi khi tính lệch nếu có
+        # sọt cũ chốt rỗng hoặc backfill. Nhãn trên cùng "Đang quét vào Sọt N"
+        # và tiêu đề khối thống kê phải cùng 1 số.
+        seq = self.current_basket_seq
         self.lbl_kpi_title.config(text=f"SỐ LƯỢNG THEO ĐƠN VỊ VẬN CHUYỂN (SỌT {seq})")
         self.lbl_total_title.config(text=f"TỔNG ĐƠN (SỌT {seq})")
         

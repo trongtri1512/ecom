@@ -11,7 +11,9 @@ a = Analysis(
     binaries=[],
     # KHÔNG bundle logos vào .exe: để thư mục logos/ nằm CẠNH .exe (như config.ini)
     # để người dùng tự thêm/đổi logo mà không cần build lại.
-    datas=[],
+    # BUNDLE VERSION: file version phải nằm TRONG .exe để _read_version() đọc được
+    # (khớp GitHub Actions tag → auto-update mới compare đúng).
+    datas=[('VERSION', '.')],
     # pystray/PIL nạp backend động; tkinter cho cửa sổ GUI -> khai báo để gom đủ.
     hiddenimports=['pystray._win32', 'PIL._tkinter_finder', 'tkinter', 'tkinter.ttk'],
     hookspath=[],
