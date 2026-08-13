@@ -61,6 +61,23 @@ Write-Step 3 "Cai thu vien + PyInstaller..."
 & $venvPy -m pip install pyinstaller==6.10.0
 
 Write-Step 4 "Dong goi thanh 1 file .exe (chay ngam, chi icon khay)..."
+# Xoa cache PYZ va build folder de PyInstaller khong dung file cu.
+# --clean cua PyInstaller KHONG xoa het cache -> phai xoa thu cong.
+$pyiCache = Join-Path $env:LOCALAPPDATA "pyinstaller"
+if (Test-Path $pyiCache) {
+    Write-Host "    Xoa cache PyInstaller: $pyiCache" -ForegroundColor Yellow
+    Remove-Item $pyiCache -Recurse -Force -ErrorAction SilentlyContinue
+}
+if (Test-Path "build") {
+    Remove-Item "build" -Recurse -Force -ErrorAction SilentlyContinue
+}
+if (Test-Path "dist\ScanEcomAgent.exe") {
+    Remove-Item "dist\ScanEcomAgent.exe" -Force -ErrorAction SilentlyContinue
+}
+# Verify VERSION source truoc khi build de log ro
+$srcVer = (Get-Content "VERSION" -Raw).Trim()
+Write-Host "    Build voi VERSION source = $srcVer" -ForegroundColor Cyan
+
 & $venvPy -m PyInstaller --noconfirm --clean ScanEcomAgent.spec
 
 $exe = Join-Path $PSScriptRoot "dist\ScanEcomAgent.exe"
