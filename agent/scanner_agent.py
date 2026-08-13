@@ -868,9 +868,11 @@ class AgentWindow:
         # ---- Thân: 3 cột (mã 1/8, KPI 4/8, bàn giao/sọt 3/8) ----
         body = tk.Frame(self.root, bg=self.BG)
         body.pack(fill="both", expand=True, padx=12, pady=10)
-        body.columnconfigure(0, weight=1)   # trái ~1/8 : danh sách mã vừa quét
-        body.columnconfigure(1, weight=4)   # giữa ~4/8: KPI sọt hiện tại + total hôm nay
-        body.columnconfigure(2, weight=3)   # phải ~3/8: bàn giao/sọt/phiên OPS
+        # weight + minsize để cột KHÔNG NHẢY khi nội dung thay đổi (VD switch
+        # tab "Sọt hôm nay" <-> "Mã phiên OPS" có nhiều cột khác nhau).
+        body.columnconfigure(0, weight=1, minsize=140)   # trái: danh sách mã vừa quét
+        body.columnconfigure(1, weight=4, minsize=520)   # giữa: KPI (cố định để không co)
+        body.columnconfigure(2, weight=3, minsize=420)   # phải: bàn giao/sọt/phiên OPS
         body.rowconfigure(0, weight=1)
 
         # TRÁI: danh sách mã vừa quét
@@ -1009,13 +1011,14 @@ class AgentWindow:
             self.tree_sessions.heading(c, text=name)
         
         # Cột phải hẹp: chỉ giữ 3 cột chính, ẩn cột phụ.
+        # stretch=NO cho MỌI cột để tree không tự nới rộng (gây nhảy grid).
         self.tree_sessions.column("stt", width=28, anchor="center", stretch=tk.NO)
-        self.tree_sessions.column("carrier", width=70, anchor="w")
-        self.tree_sessions.column("session_id", width=130, anchor="w")
+        self.tree_sessions.column("carrier", width=90, anchor="w", stretch=tk.NO)
+        self.tree_sessions.column("session_id", width=150, anchor="w", stretch=tk.YES)
         self.tree_sessions.column("type", width=0, stretch=tk.NO)
-        self.tree_sessions.column("qty", width=50, anchor="center", stretch=tk.NO)
+        self.tree_sessions.column("qty", width=60, anchor="center", stretch=tk.NO)
         self.tree_sessions.column("qty_out", width=0, stretch=tk.NO)
-        self.tree_sessions.column("status", width=70, anchor="center", stretch=tk.NO)
+        self.tree_sessions.column("status", width=80, anchor="center", stretch=tk.NO)
         self.tree_sessions.column("creator", width=0, stretch=tk.NO)
         self.tree_sessions.column("date", width=0, stretch=tk.NO)
         
@@ -1532,14 +1535,8 @@ class AgentWindow:
             data = list(self._baskets or [])
         
         if not hasattr(self, 'tree_baskets'):
-            # Vùng chứa nút hành động (nằm trên tree)
-            act_frame = tk.Frame(self.baskets_tab, bg=self.PANEL)
-            act_frame.pack(fill="x", padx=12, pady=(10, 0))
-            tk.Button(act_frame, text="🚀 Bàn giao Sọt đã chọn lên OPS", command=self._post_basket,
-                      bg="#3b82f6", fg="white", font=("Segoe UI", 9, "bold"),
-                      relief="flat", padx=10).pack(side="left")
-                      
-            # Vùng Tree
+            # Vùng Tree (bỏ nút "Bàn giao Sọt đã chọn lên OPS" — user không dùng
+            # tính năng này từ agent nữa, thao tác qua trang Admin web).
             tree_frame = tk.Frame(self.baskets_tab, bg=self.PANEL)
             tree_frame.pack(fill="both", expand=True, padx=12, pady=10)
             
