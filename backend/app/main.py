@@ -1198,6 +1198,7 @@ def list_baskets(
     agent_name: str | None = Query(default=None),
     period: str | None = Query(default="day"),
     include_open: bool = Query(default=False, description="True = kèm sọt đang mở"),
+    verify: bool = Query(default=False, description="True = kiểm tra count thật từ scans"),
     db: Session = Depends(get_db),
 ):
     """Danh sách các sọt (lọc theo agent + kỳ).
@@ -1215,7 +1216,25 @@ def list_baskets(
     if frm is not None:
         stmt = stmt.where(Basket.closed_at >= frm, Basket.closed_at <= to)
     rows = db.scalars(stmt).all()
-    return {"items": [r.as_dict() for r in rows]}
+    items = [r.as_dict() for r in rows]
+    if verify:
+        # Đếm thực tế mã theo basket_id + carrier để so với basket.total và
+        # basket.by_carrier_json (giá trị cache lúc chốt).
+        for it in items:
+            bid = it["id"]
+            real_total = db.scalar(
+                select(func.count()).select_from(Scan).where(Scan.basket_id == bid)
+            ) or 0
+            rows_c = db.execute(
+                select(Scan.carrier, func.count())
+                .where(Scan.basket_id == bid)
+                .group_by(Scan.carrier)
+            ).all()
+            real_by = {c: int(n) for c, n in rows_c}
+            it["real_total"] = int(real_total)
+            it["real_by_carrier"] = real_by
+            it["total_mismatch"] = it["real_total"] != it.get("total", 0)
+    return {"items": items}
 
 
 @app.post("/api/baskets/backfill")
