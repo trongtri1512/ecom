@@ -150,6 +150,29 @@ def _parse_version(v_str: str) -> tuple[int, ...]:
     return tuple(int(p) for p in parts) if parts else (0,)
 
 
+def _update_log_path() -> str:
+    """File log cạnh .exe cho quá trình auto-update. User dễ tìm khi debug."""
+    return os.path.join(_app_dir(), "update.log")
+
+
+def _upd_log(msg: str) -> None:
+    """Ghi 1 dòng vào update.log kèm timestamp VN. In ra stdout nếu console."""
+    try:
+        stamp = _now_vn("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    line = f"[{stamp}] {msg}\n"
+    try:
+        with open(_update_log_path(), "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+    try:
+        print(line, end="")
+    except Exception:
+        pass
+
+
 def check_and_apply_update(server_url: str, api_key: str) -> bool:
     """Kiểm tra và thực hiện cập nhật tự động mã nguồn từ server.
 
@@ -167,17 +190,28 @@ def check_and_apply_update(server_url: str, api_key: str) -> bool:
     import zipfile
 
     try:
+        _upd_log("=" * 60)
+        _upd_log(f"BAT DAU auto-update. CURRENT_VERSION={CURRENT_VERSION}")
+        _upd_log(f"  sys.executable = {sys.executable}")
+        _upd_log(f"  sys.frozen = {getattr(sys, 'frozen', False)}")
+        _upd_log(f"  _MEIPASS = {getattr(sys, '_MEIPASS', 'N/A')}")
+        _upd_log(f"  _app_dir() = {_app_dir()}")
+        _upd_log(f"  _agent_root_dir() = {_agent_root_dir()}")
+
         url = f"{server_url}/api/agent/version"
         headers = {"X-API-Key": api_key}
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code != 200:
+            _upd_log(f"HTTP {res.status_code} tu {url} -> abort")
             return False
 
         data = res.json()
         latest_ver = data.get("latest_version", "1.0.0")
         download_url = data.get("download_url")
+        _upd_log(f"Server tra: latest_version={latest_ver}, download_url={download_url}")
 
         if not download_url or _parse_version(latest_ver) <= _parse_version(CURRENT_VERSION):
+            _upd_log(f"Da la ban moi nhat hoac hon. Khong update.")
             return False
 
         # Anti-loop: nếu vừa update sang latest_ver trong 10 phút mà agent vẫn
@@ -188,9 +222,9 @@ def check_and_apply_update(server_url: str, api_key: str) -> bool:
             if os.path.exists(marker):
                 age = time.time() - os.path.getmtime(marker)
                 if age < 600:  # 10 phút
-                    print(f"[AutoUpdate] SKIP: vừa update sang v{latest_ver} cách {int(age)}s nhưng "
-                          f"CURRENT_VERSION vẫn là v{CURRENT_VERSION}. Nghi build hỏng bundle VERSION. "
-                          f"Bỏ qua để tránh loop. Xóa file {marker} để thử lại.")
+                    _upd_log(f"SKIP (anti-loop): vua update sang v{latest_ver} cach {int(age)}s "
+                             f"nhung CURRENT_VERSION van la v{CURRENT_VERSION}. Nghi build hong "
+                             f"bundle VERSION. Xoa {marker} de thu lai.")
                     return False
         except Exception:
             pass
@@ -201,13 +235,14 @@ def check_and_apply_update(server_url: str, api_key: str) -> bool:
         except Exception:
             pass
 
-        print(f"[AutoUpdate] Phát hiện phiên bản mới: v{latest_ver} (hiện tại v{CURRENT_VERSION}). Đang tải mã nguồn...")
+        _upd_log(f"Phat hien v{latest_ver} > v{CURRENT_VERSION}. Bat dau tai zip...")
 
         dl_full_url = download_url if download_url.startswith("http") else f"{server_url}{download_url}"
         z_res = requests.get(dl_full_url, headers=headers, timeout=60)
         if z_res.status_code != 200:
-            print(f"[AutoUpdate] Lỗi tải zip: {z_res.status_code}")
+            _upd_log(f"Loi tai zip: HTTP {z_res.status_code}")
             return False
+        _upd_log(f"Tai zip xong: {len(z_res.content)} bytes")
 
         temp_dir = tempfile.mkdtemp(prefix="scanecom_update_")
         zip_path = os.path.join(temp_dir, "agent_src.zip")
@@ -219,25 +254,58 @@ def check_and_apply_update(server_url: str, api_key: str) -> bool:
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
             zip_ref.extractall(extract_dir)
 
-        target_root = _agent_root_dir()
-        print(f"[AutoUpdate] Giải nén & ghi đè mã nguồn mới vào thư mục gốc: {target_root}")
+        # Verify VERSION trong zip
+        zip_ver_path = os.path.join(extract_dir, "VERSION")
+        if os.path.exists(zip_ver_path):
+            try:
+                with open(zip_ver_path, "r", encoding="utf-8") as f:
+                    zip_ver = f.read().strip()
+                _upd_log(f"VERSION trong zip = {zip_ver}")
+                if zip_ver != latest_ver:
+                    _upd_log(f"CANH BAO: VERSION trong zip ({zip_ver}) KHAC latest_version API ({latest_ver})!")
+            except Exception as e:
+                _upd_log(f"Loi doc VERSION trong zip: {e}")
+        else:
+            _upd_log("CANH BAO: KHONG co file VERSION trong zip!")
 
+        target_root = _agent_root_dir()
+        _upd_log(f"Giai nen & ghi de vao target_root = {target_root}")
+
+        copied_files = []
         for item in os.listdir(extract_dir):
             src_item = os.path.join(extract_dir, item)
             dst_item = os.path.join(target_root, item)
 
             # Bỏ qua thư mục dist và file config/db của client
             if item.lower() in ("dist", ".venv", "config.ini", "queue.db"):
+                _upd_log(f"  SKIP: {item}")
                 continue
 
-            if os.path.isdir(src_item):
-                if os.path.exists(dst_item):
-                    shutil.rmtree(dst_item, ignore_errors=True)
-                shutil.copytree(src_item, dst_item)
-            else:
-                shutil.copy2(src_item, dst_item)
+            try:
+                if os.path.isdir(src_item):
+                    if os.path.exists(dst_item):
+                        shutil.rmtree(dst_item, ignore_errors=True)
+                    shutil.copytree(src_item, dst_item)
+                    copied_files.append(f"dir:{item}")
+                else:
+                    shutil.copy2(src_item, dst_item)
+                    copied_files.append(item)
+            except Exception as e:
+                _upd_log(f"  LOI copy {item}: {e}")
 
-        print("[AutoUpdate] Đã ghi đè mã nguồn thành công. Chuẩn bị kịch bản tự động build lại .exe...")
+        _upd_log(f"Copy xong {len(copied_files)} items: {', '.join(copied_files)}")
+
+        # Verify source VERSION sau khi copy
+        src_ver_path = os.path.join(target_root, "VERSION")
+        if os.path.exists(src_ver_path):
+            try:
+                with open(src_ver_path, "r", encoding="utf-8") as f:
+                    src_ver = f.read().strip()
+                _upd_log(f"target_root/VERSION sau khi copy = {src_ver}")
+            except Exception as e:
+                _upd_log(f"Loi doc target_root/VERSION: {e}")
+        else:
+            _upd_log(f"CANH BAO: target_root/VERSION KHONG ton tai sau copy!")
 
         bat_path = os.path.join(tempfile.gettempdir(), "scanecom_updater.bat")
         current_pid = os.getpid()
