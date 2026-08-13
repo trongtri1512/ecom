@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 #  build_exe.ps1  —  Tự cài Python (nếu thiếu) rồi build ScanEcomAgent.exe
 #  Chạy 1 lệnh trong PowerShell (đứng tại thư mục agent):
 #      powershell -ExecutionPolicy Bypass -File build_exe.ps1
