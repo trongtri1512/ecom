@@ -942,12 +942,15 @@ class AgentWindow:
         self.kpi_grid.columnconfigure(0, weight=1)
         self.kpi_grid.columnconfigure(1, weight=1)
 
-        # Nút "Hoàn thành sọt" nằm dưới cùng cột giữa (dễ bấm, không kẹt trong tab).
+        # Nút hành động cuối cột giữa: "Hoàn thành sọt" (bình thường) + "Chốt cuối ca" (bypass < 10).
         close_btn_wrap = tk.Frame(right, bg=self.BG)
         close_btn_wrap.pack(fill="x", pady=(12, 0))
         tk.Button(close_btn_wrap, text="✅ Hoàn thành sọt", command=self._close_basket,
                   bg="#16a34a", fg="white", relief="flat",
                   font=("Segoe UI", 11, "bold"), padx=16, pady=8).pack(side="right")
+        tk.Button(close_btn_wrap, text="🌙 Chốt sọt cuối ca", command=self._close_basket_end_of_shift,
+                  bg="#334155", fg="#cbd5e1", relief="flat",
+                  font=("Segoe UI", 10), padx=12, pady=8).pack(side="right", padx=(0, 8))
 
         # ---- CỘT PHẢI (mới): tab Bàn giao / Sọt / Mã phiên OPS ----
         far_right = tk.Frame(body, bg=self.BG)
@@ -1407,6 +1410,73 @@ class AgentWindow:
                     f"{_now_vn('%H:%M:%S')}  ✅ Chốt {name}  Total {total} — {detail}"))
                 self.root.after(0, lambda: self.listbox.itemconfig(0, fg="#22c55e"))
                 self.root.after(0, self._pull_all)  # cập nhật danh sách sọt ngay
+            finally:
+                self._closing_in_progress = False
+        threading.Thread(target=do, daemon=True).start()
+
+    def _close_basket_end_of_shift(self):
+        """Chốt sọt cuối ca: bypass MIN_CODES_PER_BASKET + THOÁT agent sau khi chốt.
+
+        Dùng khi kết thúc ngày và sọt cuối chỉ có vài mã (< 10).
+        Confirm 2 bước để tránh bấm nhầm:
+          1. "Xác nhận chốt sọt cuối ca?" -> Yes/No.
+          2. Chốt sọt (bypass rule). Nếu API OK -> hiện thông báo tổng kết +
+             thoát agent sau 2 giây.
+        """
+        from tkinter import messagebox
+
+        current_total = 0
+        with self._summary_lock:
+            if self._summary:
+                current_total = int(self._summary.get("total") or 0)
+
+        if getattr(self, "_closing_in_progress", False):
+            return
+
+        # Confirm
+        seq = self.current_basket_seq
+        msg = (f"Chốt sọt cuối ca?\n\n"
+               f"Sọt hiện tại: Sọt {seq} — {current_total} mã.\n\n")
+        if current_total == 0:
+            msg += "⚠ Sọt đang RỖNG. Nếu chốt sẽ tạo sọt trống trên hệ thống.\n\n"
+        elif current_total < self.MIN_CODES_PER_BASKET:
+            msg += (f"⚠ Chỉ có {current_total} mã (dưới ngưỡng {self.MIN_CODES_PER_BASKET}).\n"
+                    f"Chỉ bấm khi thật sự kết thúc ca hôm nay.\n\n")
+        msg += "Sau khi chốt, agent sẽ TỰ THOÁT."
+
+        if not messagebox.askyesno("Chốt sọt cuối ca", msg, icon="question"):
+            return
+
+        self._closing_in_progress = True
+        closing_seq = self.current_basket_seq
+        # KHÔNG tăng seq — agent sẽ thoát, không quét thêm nữa.
+
+        def do():
+            try:
+                result = self.state["sender"].close_basket(basket_seq=closing_seq)
+                if result is None:
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Lỗi", "Không chốt được sọt (mất mạng?). Vui lòng thử lại."))
+                    return
+                name = result.get("name", f"Sọt {closing_seq}")
+                total = result.get("total", 0)
+                by = result.get("by_carrier", {})
+                detail = " | ".join(f"{k}:{v}" for k, v in by.items()) or "(rỗng)"
+                self.root.after(0, lambda: self.listbox.insert(0,
+                    f"{_now_vn('%H:%M:%S')}  🌙 Chốt cuối ca {name}  Total {total} — {detail}"))
+                self.root.after(0, lambda: self.listbox.itemconfig(0, fg="#a855f7"))
+                # Thông báo tổng kết ngày (lấy từ summary today).
+                s_today = None
+                with self._summary_lock:
+                    s_today = self._summary_today
+                today_total = int(s_today.get("total", 0)) if s_today else total
+                self.root.after(0, lambda: messagebox.showinfo(
+                    "Đã chốt sọt cuối ca",
+                    f"✅ Chốt {name} với {total} mã.\n\n"
+                    f"📊 Tổng ngày: {today_total} mã.\n\n"
+                    f"Agent sẽ đóng sau 2 giây."))
+                # Thoát agent hoàn toàn (kill mọi thread/tray).
+                self.root.after(2000, lambda: os._exit(0))
             finally:
                 self._closing_in_progress = False
         threading.Thread(target=do, daemon=True).start()
