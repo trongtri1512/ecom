@@ -34,24 +34,13 @@ jobs:
           echo "tag=agent-v$VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
 
-      - name: Check tag exists
-        id: check
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="${{ steps.ver.outputs.tag }}"
-          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG đã tồn tại — bỏ qua release."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Build changelog
-        if: steps.check.outputs.skip != 'true'
         id: log
         run: |
-          PREV_TAG=$(git tag --list 'agent-v*' --sort=-v:refname | head -n1)
+          TAG="${{ steps.ver.outputs.tag }}"
+          # Chọn tag ngay TRƯỚC tag hiện tại (không phải tag hiện tại nếu có).
+          PREV_TAG=$(git tag --list 'agent-v*' --sort=-v:refname \
+                       | grep -v "^${TAG}\$" | head -n1)
           if [ -z "$PREV_TAG" ]; then
             RANGE=""
             echo "Không có tag agent-v* trước đó — lấy toàn bộ commit chạm agent/."
@@ -61,13 +50,13 @@ jobs:
           fi
           {
             echo "changelog<<CHANGELOG_EOF"
-            git log $RANGE --pretty=format:"- %s (%h)" -- agent/ | grep -v '^$' || echo "- (không có thay đổi trong agent/)"
+            git log $RANGE --pretty=format:"- %s (%h)" -- agent/ \
+              | grep -v '^$' || echo "- (không có thay đổi trong agent/)"
             echo ""
             echo "CHANGELOG_EOF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Build zip
-        if: steps.check.outputs.skip != 'true'
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
           ZIP="agent_src_v${VERSION}.zip"
@@ -79,17 +68,63 @@ jobs:
           ls -la "$ZIP"
           echo "ZIP_PATH=$ZIP" >> "$GITHUB_ENV"
 
-      - name: Create git tag
-        if: steps.check.outputs.skip != 'true'
+      # Đăng ký backend TRƯỚC khi tạo tag/release. Nếu backend down thì lần sau
+      # push cùng VERSION vẫn có cơ hội retry (chưa có tag = coi như chưa release).
+      - name: Register to backend
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          RELEASE_SECRET: ${{ secrets.AGENT_RELEASE_SECRET }}
+        run: |
+          if [ -z "$BACKEND_URL" ] || [ -z "$RELEASE_SECRET" ]; then
+            echo "::error::BACKEND_URL hoặc AGENT_RELEASE_SECRET chưa cấu hình trong GitHub Secrets"
+            exit 1
+          fi
+          VERSION="${{ steps.ver.outputs.version }}"
+          CHANGELOG_FILE=$(mktemp)
+          cat > "$CHANGELOG_FILE" <<'CHLOG'
+          ${{ steps.log.outputs.changelog }}
+          CHLOG
+          echo "POST $BACKEND_URL/api/agent/releases/register (version=$VERSION)"
+          # Retry 3 lần cho network flake / cold-start container.
+          for i in 1 2 3; do
+            HTTP_CODE=$(curl -sS -o /tmp/resp.json -w "%{http_code}" \
+              --max-time 60 --connect-timeout 10 \
+              -X POST "$BACKEND_URL/api/agent/releases/register" \
+              -H "X-Release-Secret: $RELEASE_SECRET" \
+              -F "version=$VERSION" \
+              -F "changelog=<$CHANGELOG_FILE" \
+              -F "file=@$ZIP_PATH") || HTTP_CODE=000
+            echo "Attempt $i → HTTP $HTTP_CODE"
+            cat /tmp/resp.json 2>/dev/null || true; echo
+            # 200 (created) hoặc 200 (exists — idempotent) đều OK.
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ Backend đã nhận release."
+              exit 0
+            fi
+            # 4xx là lỗi client, không cần retry.
+            if [ "$HTTP_CODE" -ge 400 ] && [ "$HTTP_CODE" -lt 500 ]; then
+              echo "::error::Backend từ chối (HTTP $HTTP_CODE) — không retry."
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "::error::Backend register thất bại sau 3 lần thử."
+          exit 1
+
+      - name: Create git tag (idempotent)
         run: |
           TAG="${{ steps.ver.outputs.tag }}"
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$TAG" -m "Agent release $TAG"
-          git push origin "$TAG"
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG đã tồn tại local — skip create."
+          else
+            git tag -a "$TAG" -m "Agent release $TAG"
+          fi
+          # push -f không dùng; nếu tag đã có remote → git push trả lỗi hiền lành.
+          git push origin "refs/tags/$TAG" || echo "Tag $TAG đã có trên remote — bỏ qua."
 
-      - name: Create GitHub Release
-        if: steps.check.outputs.skip != 'true'
+      - name: Create/Update GitHub Release (idempotent)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -98,36 +133,12 @@ jobs:
           cat > "$NOTES_FILE" <<'NOTES'
           ${{ steps.log.outputs.changelog }}
           NOTES
-          gh release create "$TAG" "$ZIP_PATH" \
-            --title "$TAG" \
-            --notes-file "$NOTES_FILE"
-
-      - name: Register to backend
-        if: steps.check.outputs.skip != 'true'
-        env:
-          BACKEND_URL: ${{ secrets.BACKEND_URL }}
-          RELEASE_SECRET: ${{ secrets.AGENT_RELEASE_SECRET }}
-        run: |
-          if [ -z "$BACKEND_URL" ] || [ -z "$RELEASE_SECRET" ]; then
-            echo "::warning::BACKEND_URL hoặc AGENT_RELEASE_SECRET chưa cấu hình — bỏ qua đăng ký."
-            exit 0
-          fi
-          VERSION="${{ steps.ver.outputs.version }}"
-          CHANGELOG_FILE=$(mktemp)
-          cat > "$CHANGELOG_FILE" <<'CHLOG'
-          ${{ steps.log.outputs.changelog }}
-          CHLOG
-          echo "POST $BACKEND_URL/api/agent/releases/register"
-          HTTP_CODE=$(curl -sS -o /tmp/resp.json -w "%{http_code}" \
-            -X POST "$BACKEND_URL/api/agent/releases/register" \
-            -H "X-Release-Secret: $RELEASE_SECRET" \
-            -F "version=$VERSION" \
-            -F "changelog=<$CHANGELOG_FILE" \
-            -F "file=@$ZIP_PATH")
-          echo "HTTP $HTTP_CODE"
-          cat /tmp/resp.json || true
-          echo
-          if [ "$HTTP_CODE" -ge 300 ]; then
-            echo "::error::Backend register thất bại (HTTP $HTTP_CODE)"
-            exit 1
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG đã có — cập nhật notes + upload lại asset."
+            gh release edit "$TAG" --notes-file "$NOTES_FILE"
+            gh release upload "$TAG" "$ZIP_PATH" --clobber
+          else
+            gh release create "$TAG" "$ZIP_PATH" \
+              --title "$TAG" \
+              --notes-file "$NOTES_FILE"
           fi
