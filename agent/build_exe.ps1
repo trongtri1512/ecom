@@ -51,6 +51,10 @@ if (-not $pyArgs) {
         $pyExe = "$env:TEMP\python-3.12.8-amd64.exe"
         $pyUrl = "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe"
         try {
+            # Windows Server 2016 / Windows cu mac dinh TLS 1.0/1.1 -> python.org
+            # tu choi. Ep TLS 1.2 cho session hien tai.
+            [Net.ServicePointManager]::SecurityProtocol = `
+                [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
             Invoke-WebRequest -Uri $pyUrl -OutFile $pyExe -UseBasicParsing
             Write-Host "    Cai Python 3.12.8 silent (co Add to PATH, Python Launcher)..." -ForegroundColor Yellow
             $proc = Start-Process -Wait -PassThru -FilePath $pyExe -ArgumentList @(
