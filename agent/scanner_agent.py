@@ -779,18 +779,25 @@ class AgentWindow:
         tk.Label(col2, text="TỔNG HÔM NAY (TOÀN HỆ THỐNG)", fg="#dbeafe", bg="#1d4ed8",
                  font=("Segoe UI", 10)).pack(anchor="w")
 
-        # Số tổng + mini breakdown ĐVVC nằm cùng hàng: số bên trái to, list bên phải.
+        # Số tổng + mini breakdown ĐVVC nằm cùng hàng: số bên trái to, list bên phải chia 2 cột.
         row_today = tk.Frame(col2, bg="#1d4ed8")
         row_today.pack(fill="x", anchor="w")
         self.total_today_lbl = tk.Label(row_today, text="0", fg="white", bg="#1d4ed8",
                                         font=("Segoe UI", 30, "bold"))
         self.total_today_lbl.pack(side="left", anchor="w")
-        # Danh sách carrier nhỏ: SPX 36 · J&T 17 · BE 3 ...
-        self.today_breakdown_lbl = tk.Label(
-            row_today, text="", fg="#dbeafe", bg="#1d4ed8",
-            font=("Segoe UI", 9), justify="left", anchor="w"
+        # 2 cột breakdown: cột trái + cột phải, mỗi cột 1 Label multi-line.
+        breakdown_wrap = tk.Frame(row_today, bg="#1d4ed8")
+        breakdown_wrap.pack(side="left", anchor="s", padx=(12, 0), pady=(0, 6))
+        self.today_breakdown_col1 = tk.Label(
+            breakdown_wrap, text="", fg="#dbeafe", bg="#1d4ed8",
+            font=("Segoe UI", 9), justify="left", anchor="nw"
         )
-        self.today_breakdown_lbl.pack(side="left", anchor="s", padx=(12, 0), pady=(0, 8))
+        self.today_breakdown_col1.grid(row=0, column=0, sticky="nw", padx=(0, 16))
+        self.today_breakdown_col2 = tk.Label(
+            breakdown_wrap, text="", fg="#dbeafe", bg="#1d4ed8",
+            font=("Segoe UI", 9), justify="left", anchor="nw"
+        )
+        self.today_breakdown_col2.grid(row=0, column=1, sticky="nw")
 
         # Lưới thẻ theo ĐVVC (2 cột) — nằm ngay dưới ô Tổng, chiếm hết chiều cao còn lại
         self.kpi_grid = tk.Frame(right, bg=self.BG)
@@ -935,11 +942,14 @@ class AgentWindow:
 
         if s_today:
             self.total_today_lbl.config(text=str(s_today.get("total", 0)))
-            # Mini breakdown theo ĐVVC (bên phải số tổng): chỉ hiện hãng > 0.
+            # Mini breakdown theo ĐVVC chia 2 cột (bên phải số tổng): chỉ hiện hãng > 0.
             by_today = s_today.get("by_carrier") or {}
             order = s_today.get("carrier_order") or list(by_today.keys())
             parts = [f"{name}: {by_today.get(name, 0)}" for name in order if by_today.get(name, 0) > 0]
-            self.today_breakdown_lbl.config(text="\n".join(parts) if parts else "")
+            # Chia đôi: cột 1 = nửa đầu (làm tròn lên), cột 2 = phần còn lại.
+            mid = (len(parts) + 1) // 2
+            self.today_breakdown_col1.config(text="\n".join(parts[:mid]) if parts else "")
+            self.today_breakdown_col2.config(text="\n".join(parts[mid:]) if len(parts) > mid else "")
 
         if not s:
             return
@@ -1208,13 +1218,14 @@ class AgentWindow:
             self.tree_baskets.heading("seq", text="Sọt")
             self.tree_baskets.heading("total", text="Tổng số")
             self.tree_baskets.heading("details", text="Chi tiết theo ĐVVC")
-            self.tree_baskets.heading("time", text="Thời gian chốt")
+            self.tree_baskets.heading("time", text="Giờ chốt")
             
             self.tree_baskets.column("id", width=0, stretch=tk.NO) # Ẩn cột ID
             self.tree_baskets.column("seq", width=48, anchor="center", stretch=tk.NO)
-            self.tree_baskets.column("total", width=48, anchor="center", stretch=tk.NO)
-            self.tree_baskets.column("details", width=180, anchor="w")
-            self.tree_baskets.column("time", width=70, anchor="center", stretch=tk.NO)
+            self.tree_baskets.column("total", width=54, anchor="center", stretch=tk.NO)
+            self.tree_baskets.column("details", width=200, anchor="w")
+            # Cột thời gian: đủ rộng cho "HH:MM:SS" (đã format ngắn khi render).
+            self.tree_baskets.column("time", width=90, anchor="center", stretch=tk.NO)
             
             sb = tk.Scrollbar(tree_frame, command=self.tree_baskets.yview)
             sb.pack(side="right", fill="y")
@@ -1247,7 +1258,8 @@ class AgentWindow:
             details_arr = [f"{k}: {v}" for k, v in by_carrier.items() if v > 0]
             details = " | ".join(details_arr) if details_arr else "Trống"
             
-            time_str = (b.get("closed_at") or "")[:19].replace("T", " ")
+            # Vì tab bên phải hẹp: chỉ hiện HH:MM:SS (baskets đều là hôm nay).
+            time_str = (b.get("closed_at") or "")[11:19]
             self.tree_baskets.insert("", "end", values=(b_id, seq, total, details, time_str))
 
     def _post_basket(self):
