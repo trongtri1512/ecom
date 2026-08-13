@@ -1284,51 +1284,23 @@ class AgentWindow:
         threading.Thread(target=query, daemon=True).start()
 
     def _show_update_dialog(self, latest: str, changelog: str, released_at: str):
-        """Dialog custom: tiêu đề + version + changelog scrollable + 2 nút Yes/No."""
+        """Dialog gọn: header 1 dòng + changelog cuộn + 2 nút Yes/No dưới đáy."""
         dlg = tk.Toplevel(self.root)
         dlg.title("Có phiên bản mới")
         dlg.configure(bg=self.PANEL)
         dlg.transient(self.root)
         dlg.grab_set()
-        dlg.geometry("560x420")
-        dlg.resizable(True, True)
+        dlg.geometry("440x300")
+        dlg.resizable(False, False)
+        # Center trên cửa sổ chính
+        dlg.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 220
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 150
+        dlg.geometry(f"+{max(x, 20)}+{max(y, 20)}")
 
-        # Header
-        header = tk.Frame(dlg, bg=self.PANEL)
-        header.pack(fill="x", padx=16, pady=(16, 8))
-        tk.Label(header, text="🎉 Có phiên bản Agent mới", fg="#4ade80",
-                 bg=self.PANEL, font=("Segoe UI", 13, "bold")).pack(anchor="w")
-
-        info = tk.Frame(dlg, bg=self.PANEL)
-        info.pack(fill="x", padx=16, pady=(0, 8))
-        tk.Label(info, text=f"Phiên bản hiện tại: v{CURRENT_VERSION}",
-                 fg="#94a3b8", bg=self.PANEL, font=("Segoe UI", 10)).pack(anchor="w")
-        tk.Label(info, text=f"Phiên bản mới: v{latest}",
-                 fg="#e2e8f0", bg=self.PANEL, font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        if released_at:
-            tk.Label(info, text=f"Phát hành: {_fmt_vn_time(released_at, '%Y-%m-%d %H:%M')}",
-                     fg="#64748b", bg=self.PANEL, font=("Segoe UI", 9)).pack(anchor="w")
-
-        # Changelog (scrollable)
-        tk.Label(dlg, text="📋 Nội dung cập nhật:", fg="#94a3b8", bg=self.PANEL,
-                 font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16, pady=(8, 4))
-        log_frame = tk.Frame(dlg, bg=self.BG)
-        log_frame.pack(fill="both", expand=True, padx=16, pady=(0, 8))
-        log_text = tk.Text(log_frame, wrap="word", bg=self.BG, fg="#e2e8f0",
-                           font=("Consolas", 9), borderwidth=0, highlightthickness=0,
-                           padx=10, pady=8)
-        log_text.pack(side="left", fill="both", expand=True)
-        sb = tk.Scrollbar(log_frame, command=log_text.yview)
-        sb.pack(side="right", fill="y")
-        log_text.config(yscrollcommand=sb.set)
-        log_text.insert("1.0", changelog or "(Không có ghi chú thay đổi)")
-        log_text.config(state="disabled")
-
-        # Buttons
+        # 1. NÚT PHẢI PACK TRƯỚC (side="bottom") — luôn ở đáy, không bị đè.
         btns = tk.Frame(dlg, bg=self.PANEL)
-        btns.pack(fill="x", padx=16, pady=(4, 16))
-        tk.Label(btns, text="Quá trình mất ~1 phút, agent tự khởi động lại.",
-                 fg="#64748b", bg=self.PANEL, font=("Segoe UI", 9, "italic")).pack(side="left")
+        btns.pack(side="bottom", fill="x", padx=14, pady=(6, 12))
 
         def do_update():
             dlg.destroy()
@@ -1342,10 +1314,34 @@ class AgentWindow:
 
         tk.Button(btns, text="Để sau", command=skip,
                   bg="#334155", fg="#e2e8f0", relief="flat",
-                  font=("Segoe UI", 10), padx=16, pady=6).pack(side="right", padx=(6, 0))
+                  font=("Segoe UI", 10), padx=14, pady=5).pack(side="right", padx=(6, 0))
         tk.Button(btns, text="✓ Cập nhật ngay", command=do_update,
                   bg="#16a34a", fg="white", relief="flat",
-                  font=("Segoe UI", 10, "bold"), padx=16, pady=6).pack(side="right")
+                  font=("Segoe UI", 10, "bold"), padx=14, pady=5).pack(side="right")
+
+        # 2. Header + info gọn (1 dòng)
+        tk.Label(dlg, text="🎉 Có phiên bản Agent mới",
+                 fg="#4ade80", bg=self.PANEL, font=("Segoe UI", 12, "bold")
+                 ).pack(anchor="w", padx=14, pady=(12, 4))
+
+        subtitle = f"v{CURRENT_VERSION}  →  v{latest}"
+        if released_at:
+            subtitle += f"   ·   {_fmt_vn_time(released_at, '%d/%m/%Y %H:%M')}"
+        tk.Label(dlg, text=subtitle, fg="#94a3b8", bg=self.PANEL,
+                 font=("Segoe UI", 9)).pack(anchor="w", padx=14, pady=(0, 6))
+
+        # 3. Changelog scrollable — điền phần còn lại giữa header và nút.
+        log_frame = tk.Frame(dlg, bg=self.BG)
+        log_frame.pack(fill="both", expand=True, padx=14, pady=(0, 6))
+        log_text = tk.Text(log_frame, wrap="word", bg=self.BG, fg="#e2e8f0",
+                           font=("Consolas", 9), borderwidth=0, highlightthickness=0,
+                           padx=8, pady=6, height=6)
+        log_text.pack(side="left", fill="both", expand=True)
+        sb = tk.Scrollbar(log_frame, command=log_text.yview)
+        sb.pack(side="right", fill="y")
+        log_text.config(yscrollcommand=sb.set)
+        log_text.insert("1.0", changelog or "(Không có ghi chú thay đổi)")
+        log_text.config(state="disabled")
 
     # --- Sọt ---
     MIN_CODES_PER_BASKET = 10  # yêu cầu tối thiểu để chốt 1 sọt
