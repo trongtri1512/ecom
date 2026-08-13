@@ -84,6 +84,10 @@ class Basket(Base):
     ops_sessions_json: Mapped[str] = mapped_column(String(2000), nullable=False, default="{}")
     # Nhật ký chi tiết mã lỗi: [{"code": "...", "reason": "đã tồn tại"}, ...].
     ops_errors_json: Mapped[str] = mapped_column(String(8000), nullable=False, default="[]")
+    # True = user đã bấm "Hoàn thành sọt" (close_basket). False = sọt đang mở,
+    # mã vẫn có thể quét thêm. Cần để phân biệt trong /api/baskets (chỉ trả
+    # is_closed=True) vì lúc _upsert tạo sọt closed_at đã default = now.
+    is_closed: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     def as_dict(self) -> dict:
         import json
@@ -112,6 +116,7 @@ class Basket(Base):
             "ops_handed_at": self.ops_handed_at.isoformat() if self.ops_handed_at else None,
             "ops_sessions": ops_sessions,
             "ops_errors": ops_errors,
+            "is_closed": bool(self.is_closed),
         }
 
 

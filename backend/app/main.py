@@ -1024,13 +1024,10 @@ def next_basket_seq(agent_name: str = Query(...), db: Session = Depends(get_db))
 
     Logic:
       - Chưa có sọt nào hôm nay -> current_seq = 1.
-      - Sọt cuối N đã chốt (total > 0) -> current_seq = N+1 (sọt kế tiếp).
-      - Sọt cuối N còn RỖNG (total == 0) -> có 2 khả năng:
-          a) Đã có mã quét vào sọt N (Scan.basket_id = N) nhưng chưa chốt
-             -> trả N để agent tiếp tục quét vào đúng sọt đó.
-          b) Chưa có mã nào -> vẫn trả N (khớp record rỗng đã tạo).
-      - `pending_total`: số mã đang chờ trong sọt trả về (để agent biết có
-        đang lỡ dở gì không).
+      - Sọt cuối N đã CHỐT (is_closed=True) -> current_seq = N+1 (sọt kế tiếp).
+      - Sọt cuối N chưa chốt (is_closed=False) -> trả N để agent tiếp tục
+        quét vào đúng sọt đó (dù có 0 hay nhiều mã).
+      - `pending_total`: số mã đang chờ trong sọt trả về.
     """
     frm, _ = period_range("day")
     last = db.scalar(
@@ -1042,12 +1039,9 @@ def next_basket_seq(agent_name: str = Query(...), db: Session = Depends(get_db))
     if not last:
         return {"agent_name": agent_name, "current_seq": 1, "pending_total": 0}
 
-    if last.total > 0:
-        # Sọt cuối đã chốt (close_basket đã set total > 0) -> quét vào sọt kế.
+    if last.is_closed:
         return {"agent_name": agent_name, "current_seq": last.seq + 1, "pending_total": 0}
 
-    # total == 0: hoặc chưa quét mã nào, hoặc user vừa mở lại agent giữa sọt.
-    # Đếm số mã đã gán basket_id = last.id để biết thật sự.
     pending = db.scalar(
         select(func.count()).select_from(Scan).where(Scan.basket_id == last.id)
     ) or 0
@@ -1098,6 +1092,7 @@ def close_basket(
         basket.total = len(scans)
         basket.by_carrier_json = json.dumps(by_carrier, ensure_ascii=False)
         basket.closed_at = now
+        basket.is_closed = True
         db.commit()
         db.refresh(basket)
     else:
@@ -1123,7 +1118,8 @@ def close_basket(
         total = len(scans_in_basket)
         basket = Basket(seq=next_seq, source_agent=agent_name,
                         started_at=started_at, closed_at=now,
-                        total=total, by_carrier_json=json.dumps(by_carrier, ensure_ascii=False))
+                        total=total, by_carrier_json=json.dumps(by_carrier, ensure_ascii=False),
+                        is_closed=True)
         db.add(basket)
         db.flush()
         for s in scans_in_basket:
@@ -1183,12 +1179,20 @@ def current_basket_stats(
 def list_baskets(
     agent_name: str | None = Query(default=None),
     period: str | None = Query(default="day"),
+    include_open: bool = Query(default=False, description="True = kèm sọt đang mở"),
     db: Session = Depends(get_db),
 ):
-    """Danh sách các sọt (lọc theo agent + kỳ)."""
+    """Danh sách các sọt (lọc theo agent + kỳ).
+
+    Mặc định CHỈ trả sọt đã chốt (is_closed=True). Sọt đang mở (chưa bấm nút
+    Hoàn thành sọt) bị ẩn để tránh nhầm lẫn với "Giờ chốt" trong UI.
+    Truyền include_open=true nếu cần xem cả sọt đang quét (VD trang Admin).
+    """
     stmt = select(Basket).order_by(Basket.closed_at.desc())
     if agent_name:
         stmt = stmt.where(Basket.source_agent == agent_name)
+    if not include_open:
+        stmt = stmt.where(Basket.is_closed == True)  # noqa: E712
     frm, to = period_range(period)
     if frm is not None:
         stmt = stmt.where(Basket.closed_at >= frm, Basket.closed_at <= to)

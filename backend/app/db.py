@@ -60,6 +60,28 @@ def _run_light_migrations():
             to_add.append("ALTER TABLE baskets ADD COLUMN ops_sessions_json VARCHAR(2000) NOT NULL DEFAULT '{}'")
         if "ops_errors_json" not in cols:
             to_add.append("ALTER TABLE baskets ADD COLUMN ops_errors_json VARCHAR(8000) NOT NULL DEFAULT '[]'")
+        if "is_closed" not in cols:
+            # BOOLEAN DEFAULT FALSE để tương thích cả SQLite lẫn Postgres.
+            # Backfill: sọt cũ trong DB được coi là ĐÃ CHỐT (is_closed=True)
+            # NGOẠI TRỪ sọt "đang mở" (record total=0 tạo bởi _upsert_basket
+            # khi mã đầu tiên vào nhưng chưa qua close_basket). Heuristic:
+            # sọt total=0 mà là sọt seq lớn nhất của agent trong hôm nay ->
+            # đang mở. Giản lược: set is_closed=True cho sọt có total>0,
+            # và cho sọt total=0 mà KHÔNG phải seq lớn nhất theo agent (sọt
+            # rỗng đã chốt bằng cách bấm nút Hoàn thành sọt trước đây, bản cũ
+            # không chặn <10 mã).
+            to_add.append("ALTER TABLE baskets ADD COLUMN is_closed BOOLEAN NOT NULL DEFAULT FALSE")
+            to_add.append("UPDATE baskets SET is_closed=TRUE WHERE total > 0")
+            # Với sọt total=0: chỉ giữ sọt cuối cùng của agent là "đang mở",
+            # còn lại đều là chốt-rỗng do bấm nút bản cũ.
+            # Postgres cú pháp: dùng subquery + tuple compare.
+            to_add.append(
+                "UPDATE baskets SET is_closed=TRUE WHERE total = 0 "
+                "AND (source_agent, seq) NOT IN ("
+                "  SELECT source_agent, MAX(seq) FROM baskets "
+                "  WHERE total = 0 GROUP BY source_agent"
+                ")"
+            )
     # --- carrier_rules (cấu hình auto import theo hãng) ---
     if "carrier_rules" in tables:
         cols = {c["name"] for c in inspector.get_columns("carrier_rules")}
