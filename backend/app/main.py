@@ -65,6 +65,23 @@ def require_api_key(x_api_key: str = Header(default="")):
 _VN_TZ = timezone(timedelta(hours=7))
 
 
+def _build_ops_note(carrier: str, basket_seq: int | None = None) -> str:
+    """Ghi chú gửi lên OPS khi tạo phiên bàn giao.
+
+    Format: YYYYMMDD-HH:MM-<carrier>[-Sọt N]
+    Ví dụ:
+      - Có sọt: "20260813-22:47-SPX-Sọt 11"
+      - Không sọt (auto-import gom nhiều sọt): "20260813-22:47-SPX"
+
+    Giờ VN (+7), không lấy giây (giữ ghi chú gọn cho OPS).
+    """
+    stamp = datetime.now(_VN_TZ).strftime("%Y%m%d-%H:%M")
+    parts = [stamp, carrier]
+    if basket_seq is not None:
+        parts.append(f"Sọt {basket_seq}")
+    return "-".join(parts)
+
+
 def _add_months(d: datetime, months: int) -> datetime:
     """Cộng/trừ tháng an toàn (giữ ngày 1)."""
     m = d.month - 1 + months
@@ -510,7 +527,7 @@ def _try_auto_import():
             if len(rows) < batch:
                 continue  # chưa đủ batch
             codes = [r.code for r in rows]
-            stamp = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{carrier}"
+            stamp = _build_ops_note(carrier)
             print(f"[auto-import] {carrier} bắt đầu nhập {len(codes)} đơn qua scan_import")
             # Dùng scan_import (gõ từng mã) thay vì upload file Excel.
             result = ops_uploader.scan_import(carrier, codes, template_id, partner, stamp)
@@ -570,7 +587,7 @@ def _force_auto_import_all():
                 continue
                 
             codes = [s.code for s in scans]
-            stamp = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{carrier}"
+            stamp = _build_ops_note(carrier)
             print(f"[force-import] {carrier}: Bắt đầu nhập {len(codes)} đơn")
             
             result = ops_uploader.scan_import(carrier, codes, template_id, partner, stamp)
@@ -651,7 +668,7 @@ def ops_import_now(
             hint = "picked & chưa import" if require_picked else "chưa import"
             return {"status": "empty", "message": f"Không có đơn {carrier} nào ({hint})"}
         codes = [r.code for r in rows]
-        stamp = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{carrier}"
+        stamp = _build_ops_note(carrier)
         # Dùng scan_import (gõ từng mã) thay vì upload file Excel.
         result = ops_uploader.scan_import(carrier, codes, cfg["template_id"], cfg["partner"], stamp)
         session_id = ""
@@ -768,7 +785,8 @@ def ops_import_basket(
         partner = cfg["partner"]
         codes = [s.code for s in carrier_scans]
         total_processed += len(codes)
-        stamp = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{carrier}"
+        # Ghi chú kèm số sọt: "YYYYMMDD-HH:MM-<carrier>-Sọt N"
+        stamp = _build_ops_note(carrier, basket_seq=basket.seq)
 
         result = ops_uploader.scan_import(carrier, codes, template_id, partner, stamp)
         if result.get("ok"):
