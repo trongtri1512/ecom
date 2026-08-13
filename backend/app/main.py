@@ -1522,6 +1522,55 @@ async def upload_agent_release(
     return release.as_dict()
 
 
+@app.post("/api/agent/releases/register")
+async def register_agent_release(
+    version: str = Form(...),
+    changelog: str = Form(default=""),
+    file: UploadFile = File(...),
+    x_release_secret: str | None = Header(default=None, alias="X-Release-Secret"),
+    db: Session = Depends(get_db),
+):
+    """Endpoint cho GitHub Actions tự động phát hành bản Agent mới.
+
+    Auth bằng header X-Release-Secret khớp env AGENT_RELEASE_SECRET.
+    Nếu version đã tồn tại → 200 idempotent (Actions retry an toàn).
+    """
+    if not config.AGENT_RELEASE_SECRET:
+        raise HTTPException(status_code=503, detail="AGENT_RELEASE_SECRET chưa cấu hình trên server")
+    if x_release_secret != config.AGENT_RELEASE_SECRET:
+        raise HTTPException(status_code=401, detail="Sai release secret")
+
+    version = version.strip()
+    if not version:
+        raise HTTPException(status_code=400, detail="Thiếu version")
+    if not file.filename or not file.filename.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="File phải là .zip")
+
+    existing = db.execute(select(AgentRelease).where(AgentRelease.version == version)).scalars().first()
+    if existing:
+        return {"status": "exists", "release": existing.as_dict()}
+
+    filename = f"agent_src_v{version}.zip"
+    zip_path = os.path.join(config.AGENT_RELEASES_DIR, filename)
+    contents = await file.read()
+    with open(zip_path, "wb") as f:
+        f.write(contents)
+
+    db.execute(update(AgentRelease).values(is_active=False))
+    release = AgentRelease(
+        version=version,
+        filename=filename,
+        changelog=changelog,
+        is_active=True,
+    )
+    db.add(release)
+    db.commit()
+    db.refresh(release)
+
+    events.emit_event("agent_release", release.as_dict())
+    return {"status": "created", "release": release.as_dict()}
+
+
 @app.get("/admin", response_class=HTMLResponse)
 def serve_admin(username: str = Depends(check_admin)):
     """Phục vụ file admin có bảo vệ mật khẩu."""

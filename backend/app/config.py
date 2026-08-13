@@ -65,3 +65,6 @@ OPS_LOGS_DIR = _get("OPS_LOGS_DIR", "/app/ops_logs")
 AGENT_RELEASES_DIR = _get("AGENT_RELEASES_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent_releases"))
 os.makedirs(AGENT_RELEASES_DIR, exist_ok=True)
 
+# Secret cho endpoint /api/agent/releases/register (GitHub Actions gọi).
+AGENT_RELEASE_SECRET = _get("AGENT_RELEASE_SECRET", "")
+

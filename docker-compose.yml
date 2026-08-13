@@ -43,9 +43,13 @@ services:
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_TLS: ${SMTP_TLS:-true}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      # Secret cho GitHub Actions gọi /api/agent/releases/register
+      AGENT_RELEASE_SECRET: ${AGENT_RELEASE_SECRET:-}
     volumes:
       # Log OPS + screenshot lỗi — mount ra ngoài để không mất khi rebuild.
       - ops_logs:/app/ops_logs
+      # ZIP release Agent — giữ nguyên khi rebuild container.
+      - agent_releases:/app/agent_releases
     ports:
       # Dokploy sẽ reverse-proxy domain vào cổng này. Đổi trái nếu trùng cổng.
       - "${APP_PORT:-8000}:8000"
@@ -53,3 +57,4 @@ services:
 volumes:
   db_data:
   ops_logs:
+  agent_releases:

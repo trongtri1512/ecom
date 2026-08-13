@@ -107,6 +107,45 @@ Mở:
 
 - ✅ **Tự động Cập nhật & Auto-Build Agent trên Windows**: Agent tự động check version mới, tải `.zip` mã nguồn, giải nén đè vào `D:\Tool\agent\` (giữ nguyên config & queue DB trong `dist/`), tự kích hoạt `build_exe.ps1` build lại `.exe` và khởi chạy lại app mượt mà.
 - ✅ **Quản lý Release Agent từ Admin Web**: Admin có thể bấm nút **"⚡ Phát hành từ folder agent/"** hoặc upload file `.zip` thủ công để đẩy phiên bản mới xuống tất cả các máy Agent.
+- ✅ **Auto phát hành Agent qua GitHub Actions**: Chỉ cần sửa `agent/VERSION` và push lên `main`. Workflow tự zip `agent/`, sinh changelog từ commit giữa 2 tag, tạo GitHub Release, và POST bản zip về backend qua endpoint `/api/agent/releases/register`. Xem chi tiết bên dưới.
+
+### 🤖 Auto phát hành Agent qua GitHub Actions
+
+Workflow: `.github/workflows/agent-release.yml`. Trigger khi push `main` có thay đổi trong `agent/**`.
+
+**Luồng:**
+1. Bạn sửa code trong `agent/`, cập nhật `agent/VERSION` (VD `1.0.0` → `1.1.0`), commit + push.
+2. Actions đọc `VERSION`, kiểm tra tag `agent-v<VERSION>` đã tồn tại chưa (idempotent — chưa có mới chạy).
+3. Zip toàn bộ `agent/` (loại `dist/`, `.venv/`, `__pycache__/`, `config.ini`, `*.db`, `*.pyc`).
+4. Sinh changelog từ `git log <tag-trước>..HEAD -- agent/`.
+5. Tạo git tag + GitHub Release (đính kèm zip).
+6. `curl POST` zip về `BACKEND_URL/api/agent/releases/register` với header `X-Release-Secret`.
+7. Backend lưu vào volume `agent_releases`, set `is_active=True`, disable version cũ.
+8. Agent Windows kiểm tra `/api/agent/version` (mỗi 30 phút / khi khởi động) → thấy version mới → tải zip qua `/api/agent/download-source` → giải nén → `build_exe.ps1` → restart.
+
+**Cài đặt (làm 1 lần):**
+
+1. Sinh secret: `openssl rand -hex 32` (hoặc chuỗi random bất kỳ).
+2. Trên VPS/Dokploy: thêm biến env `AGENT_RELEASE_SECRET=<chuỗi trên>` (đã có trong `.env.example`), redeploy backend.
+3. Trên GitHub repo `Settings → Secrets and variables → Actions → New repository secret`, thêm 2 secrets:
+   - `AGENT_RELEASE_SECRET` = **cùng chuỗi** đã set trên backend.
+   - `BACKEND_URL` = URL công khai của backend, VD `https://ecom.dulieu.us` (không kèm `/` cuối).
+
+**Cách phát hành từ giờ:**
+
+```bash
+# 1. Sửa code trong agent/
+# 2. Bump version
+echo "1.1.0" > agent/VERSION
+# 3. Commit + push
+git add agent/
+git commit -m "feat(agent): thêm tính năng X"
+git push origin main
+```
+
+Xong. Actions chạy → release tự lên. Nếu quên bump version (giữ nguyên `VERSION`), Actions detect tag đã tồn tại → skip release (không phải bug, đúng logic idempotent).
+
+**Rollback:** Vào `/admin` tab 🤖 Quản lý Agent → toggle `is_active` sang version cũ. Agent lần check kế tiếp sẽ tải bản đó.
 
 ## Trang Admin `/admin`
 

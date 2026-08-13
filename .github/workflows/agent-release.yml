@@ -1,0 +1,133 @@
+name: Release Agent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agent/**"
+      - ".github/workflows/agent-release.yml"
+
+concurrency:
+  group: agent-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: ver
+        run: |
+          VERSION=$(head -n1 agent/VERSION | tr -d '[:space:]')
+          if [ -z "$VERSION" ]; then
+            echo "::error::agent/VERSION rỗng"; exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=agent-v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Check tag exists
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG đã tồn tại — bỏ qua release."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build changelog
+        if: steps.check.outputs.skip != 'true'
+        id: log
+        run: |
+          PREV_TAG=$(git tag --list 'agent-v*' --sort=-v:refname | head -n1)
+          if [ -z "$PREV_TAG" ]; then
+            RANGE=""
+            echo "Không có tag agent-v* trước đó — lấy toàn bộ commit chạm agent/."
+          else
+            RANGE="$PREV_TAG..HEAD"
+            echo "Phạm vi: $RANGE"
+          fi
+          {
+            echo "changelog<<CHANGELOG_EOF"
+            git log $RANGE --pretty=format:"- %s (%h)" -- agent/ | grep -v '^$' || echo "- (không có thay đổi trong agent/)"
+            echo ""
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build zip
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          ZIP="agent_src_v${VERSION}.zip"
+          cd agent
+          zip -r "../$ZIP" . \
+            -x "dist/*" ".venv/*" "__pycache__/*" "*/__pycache__/*" \
+               "*.pyc" "*.db" "config.ini" ".idea/*" ".vscode/*"
+          cd ..
+          ls -la "$ZIP"
+          echo "ZIP_PATH=$ZIP" >> "$GITHUB_ENV"
+
+      - name: Create git tag
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Agent release $TAG"
+          git push origin "$TAG"
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          NOTES_FILE=$(mktemp)
+          cat > "$NOTES_FILE" <<'NOTES'
+          ${{ steps.log.outputs.changelog }}
+          NOTES
+          gh release create "$TAG" "$ZIP_PATH" \
+            --title "$TAG" \
+            --notes-file "$NOTES_FILE"
+
+      - name: Register to backend
+        if: steps.check.outputs.skip != 'true'
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          RELEASE_SECRET: ${{ secrets.AGENT_RELEASE_SECRET }}
+        run: |
+          if [ -z "$BACKEND_URL" ] || [ -z "$RELEASE_SECRET" ]; then
+            echo "::warning::BACKEND_URL hoặc AGENT_RELEASE_SECRET chưa cấu hình — bỏ qua đăng ký."
+            exit 0
+          fi
+          VERSION="${{ steps.ver.outputs.version }}"
+          CHANGELOG_FILE=$(mktemp)
+          cat > "$CHANGELOG_FILE" <<'CHLOG'
+          ${{ steps.log.outputs.changelog }}
+          CHLOG
+          echo "POST $BACKEND_URL/api/agent/releases/register"
+          HTTP_CODE=$(curl -sS -o /tmp/resp.json -w "%{http_code}" \
+            -X POST "$BACKEND_URL/api/agent/releases/register" \
+            -H "X-Release-Secret: $RELEASE_SECRET" \
+            -F "version=$VERSION" \
+            -F "changelog=<$CHANGELOG_FILE" \
+            -F "file=@$ZIP_PATH")
+          echo "HTTP $HTTP_CODE"
+          cat /tmp/resp.json || true
+          echo
+          if [ "$HTTP_CODE" -ge 300 ]; then
+            echo "::error::Backend register thất bại (HTTP $HTTP_CODE)"
+            exit 1
+          fi
