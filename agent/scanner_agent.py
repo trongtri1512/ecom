@@ -1232,54 +1232,120 @@ class AgentWindow:
                 self.listbox.insert(0, f"{_now_vn('%H:%M:%S')}  📤 Import OPS   {carrier}: {sid}")
                 self.listbox.itemconfig(0, fg="#3b82f6")
 
-    # --- Cập nhật thủ công ---
-    def _check_update_now(self):
-        """User bấm nút "🔄 Kiểm tra cập nhật".
+    # --- Cập nhật ---
+    def _check_update_now(self, silent_if_no_update: bool = False):
+        """Kiểm tra cập nhật + hiện dialog (dùng cho cả nút bấm và auto-check khi mở app).
 
         Flow: query API version ở thread nền → bounce về main thread hiện dialog
         → user confirm → spawn updater ở thread nền (updater sẽ os._exit).
-        """
-        from tkinter import messagebox
 
+        silent_if_no_update:
+          - False (mặc định — nút bấm): đã mới nhất -> hiện "Đã là bản mới nhất".
+          - True (auto-check khi mở app): đã mới nhất -> im lặng, chỉ hiện khi có bản mới.
+        """
         def query():
             try:
                 r = self.state["sender"].session.get(
                     self.cfg["url"] + "/api/agent/version", timeout=8
                 )
                 if r.status_code != 200:
-                    self.root.after(0, lambda: messagebox.showerror(
-                        "Lỗi kết nối", f"Server trả về HTTP {r.status_code}"))
+                    if not silent_if_no_update:
+                        from tkinter import messagebox
+                        self.root.after(0, lambda: messagebox.showerror(
+                            "Lỗi kết nối", f"Server trả về HTTP {r.status_code}"))
                     return
                 data = r.json()
-                latest = data.get("latest_version") or ""
-                self.root.after(0, lambda: show_result(latest))
+                self.root.after(0, lambda: show_result(data))
             except Exception as ex:
-                self.root.after(0, lambda: messagebox.showerror(
-                    "Lỗi", f"Không kiểm được cập nhật: {ex}"))
+                if not silent_if_no_update:
+                    from tkinter import messagebox
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Lỗi", f"Không kiểm được cập nhật: {ex}"))
 
-        def show_result(latest: str):
+        def show_result(data: dict):
+            latest = data.get("latest_version") or ""
+            changelog = (data.get("changelog") or "").strip()
+            released_at = data.get("released_at") or ""
+
             if _parse_version(latest) <= _parse_version(CURRENT_VERSION):
+                if silent_if_no_update:
+                    return
+                from tkinter import messagebox
                 messagebox.showinfo(
                     "Đã là bản mới nhất",
                     f"Phiên bản hiện tại: v{CURRENT_VERSION}\n"
                     f"Phiên bản trên server: v{latest}\n\n"
                     f"Không cần cập nhật.")
                 return
-            ok = messagebox.askyesno(
-                "Có phiên bản mới",
-                f"Server có v{latest} (hiện tại v{CURRENT_VERSION}).\n\n"
-                f"Agent sẽ tự tải, build lại và khởi động lại.\n"
-                f"Quá trình mất ~1 phút.\n\n"
-                f"Tiếp tục cập nhật ngay?")
-            if not ok:
-                return
-            # Chạy check_and_apply_update ở thread nền — nó sẽ os._exit(0) khi xong.
+
+            # Có phiên bản mới -> hiện dialog custom kèm changelog dạng scrollable.
+            self._show_update_dialog(latest, changelog, released_at)
+
+        threading.Thread(target=query, daemon=True).start()
+
+    def _show_update_dialog(self, latest: str, changelog: str, released_at: str):
+        """Dialog custom: tiêu đề + version + changelog scrollable + 2 nút Yes/No."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Có phiên bản mới")
+        dlg.configure(bg=self.PANEL)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.geometry("560x420")
+        dlg.resizable(True, True)
+
+        # Header
+        header = tk.Frame(dlg, bg=self.PANEL)
+        header.pack(fill="x", padx=16, pady=(16, 8))
+        tk.Label(header, text="🎉 Có phiên bản Agent mới", fg="#4ade80",
+                 bg=self.PANEL, font=("Segoe UI", 13, "bold")).pack(anchor="w")
+
+        info = tk.Frame(dlg, bg=self.PANEL)
+        info.pack(fill="x", padx=16, pady=(0, 8))
+        tk.Label(info, text=f"Phiên bản hiện tại: v{CURRENT_VERSION}",
+                 fg="#94a3b8", bg=self.PANEL, font=("Segoe UI", 10)).pack(anchor="w")
+        tk.Label(info, text=f"Phiên bản mới: v{latest}",
+                 fg="#e2e8f0", bg=self.PANEL, font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        if released_at:
+            tk.Label(info, text=f"Phát hành: {_fmt_vn_time(released_at, '%Y-%m-%d %H:%M')}",
+                     fg="#64748b", bg=self.PANEL, font=("Segoe UI", 9)).pack(anchor="w")
+
+        # Changelog (scrollable)
+        tk.Label(dlg, text="📋 Nội dung cập nhật:", fg="#94a3b8", bg=self.PANEL,
+                 font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16, pady=(8, 4))
+        log_frame = tk.Frame(dlg, bg=self.BG)
+        log_frame.pack(fill="both", expand=True, padx=16, pady=(0, 8))
+        log_text = tk.Text(log_frame, wrap="word", bg=self.BG, fg="#e2e8f0",
+                           font=("Consolas", 9), borderwidth=0, highlightthickness=0,
+                           padx=10, pady=8)
+        log_text.pack(side="left", fill="both", expand=True)
+        sb = tk.Scrollbar(log_frame, command=log_text.yview)
+        sb.pack(side="right", fill="y")
+        log_text.config(yscrollcommand=sb.set)
+        log_text.insert("1.0", changelog or "(Không có ghi chú thay đổi)")
+        log_text.config(state="disabled")
+
+        # Buttons
+        btns = tk.Frame(dlg, bg=self.PANEL)
+        btns.pack(fill="x", padx=16, pady=(4, 16))
+        tk.Label(btns, text="Quá trình mất ~1 phút, agent tự khởi động lại.",
+                 fg="#64748b", bg=self.PANEL, font=("Segoe UI", 9, "italic")).pack(side="left")
+
+        def do_update():
+            dlg.destroy()
             threading.Thread(
                 target=lambda: check_and_apply_update(self.cfg["url"], self.cfg["api_key"]),
                 daemon=True
             ).start()
 
-        threading.Thread(target=query, daemon=True).start()
+        def skip():
+            dlg.destroy()
+
+        tk.Button(btns, text="Để sau", command=skip,
+                  bg="#334155", fg="#e2e8f0", relief="flat",
+                  font=("Segoe UI", 10), padx=16, pady=6).pack(side="right", padx=(6, 0))
+        tk.Button(btns, text="✓ Cập nhật ngay", command=do_update,
+                  bg="#16a34a", fg="white", relief="flat",
+                  font=("Segoe UI", 10, "bold"), padx=16, pady=6).pack(side="right")
 
     # --- Sọt ---
     MIN_CODES_PER_BASKET = 10  # yêu cầu tối thiểu để chốt 1 sọt
@@ -1542,12 +1608,22 @@ def main():
 
     # Chạy nền: kiểm tra tự động cập nhật mã nguồn & build lại .exe từ server.
     def _auto_update_loop():
+        # Đợi 5s cho GUI tk mainloop kịp sẵn sàng (nếu có window).
         time.sleep(5)
+        first_check = True
         while True:
             try:
-                check_and_apply_update(cfg["url"], cfg["api_key"])
+                win = state.get("window")
+                if win is not None:
+                    # Có GUI: hiện dialog kèm changelog để user Yes/No.
+                    # first_check: khi vừa mở app, luôn kiểm tra (im lặng nếu đã mới nhất).
+                    win._check_update_now(silent_if_no_update=True)
+                else:
+                    # Không có GUI (chỉ tray hoặc console): update im lặng như cũ.
+                    check_and_apply_update(cfg["url"], cfg["api_key"])
             except Exception as ex:
                 print(f"[AutoUpdate Error] {ex}")
+            first_check = False
             time.sleep(30 * 60)
 
     threading.Thread(target=_auto_update_loop, daemon=True).start()
