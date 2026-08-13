@@ -1287,18 +1287,23 @@ class AgentWindow:
     def _close_basket(self):
         """Bấm nút Hoàn thành sọt: chốt sọt hiện tại, TĂNG seq cho sọt kế tiếp.
 
-        Chặn: sọt phải có >= MIN_CODES_PER_BASKET mã. Rỗng hoặc dưới ngưỡng ->
-        thông báo, KHÔNG chốt. Tránh việc lỡ tay bấm chốt khi vừa mở app hoặc
-        khi mới quét được vài mã.
+        Thứ tự đúng để tránh race condition:
+        1. Check total >= MIN.
+        2. Check `_closing_in_progress` (chống double-click) — nếu đang chốt, bỏ qua.
+        3. TĂNG current_basket_seq NGAY (trước khi gọi API) — mọi mã quét từ giờ
+           sẽ vào sọt mới. Sọt cũ được "đóng băng".
+        4. Gọi API close_basket(basket_seq=closing_seq) ở thread nền.
+        5. Nếu API fail -> rollback seq về closing_seq.
         """
-        # Ưu tiên số hiển thị trên UI (đã đồng bộ với server qua _pull_all).
+        from tkinter import messagebox
+
+        # 1. Check total
         current_total = 0
         with self._summary_lock:
             if self._summary:
                 current_total = int(self._summary.get("total") or 0)
 
         if current_total < self.MIN_CODES_PER_BASKET:
-            from tkinter import messagebox
             messagebox.showwarning(
                 "Chưa đủ mã để chốt sọt",
                 f"Sọt {self.current_basket_seq} hiện có {current_total} mã.\n"
@@ -1307,27 +1312,41 @@ class AgentWindow:
             )
             return
 
+        # 2. Chống double-click
+        if getattr(self, "_closing_in_progress", False):
+            return
+        self._closing_in_progress = True
+
+        # 3. TĂNG seq NGAY. Từ giây này, handle_code() đọc current_basket_seq
+        #    sẽ ra sọt MỚI -> mã quét trong lúc API chạy không bị gán vào sọt
+        #    đang chốt (race condition cũ).
         closing_seq = self.current_basket_seq
+        self.current_basket_seq = closing_seq + 1
+        new_seq = self.current_basket_seq
+        self.current_basket_lbl.config(text=f"🟢 Đang quét vào Sọt {new_seq}")
+
         def do():
-            result = self.state["sender"].close_basket(basket_seq=closing_seq)
-            if result is None:
+            try:
+                result = self.state["sender"].close_basket(basket_seq=closing_seq)
+                if result is None:
+                    # 5. API fail -> rollback seq
+                    self.current_basket_seq = closing_seq
+                    self.root.after(0, lambda: self.current_basket_lbl.config(
+                        text=f"🟢 Đang quét vào Sọt {closing_seq}"))
+                    self.root.after(0, lambda: self.listbox.insert(0,
+                        f"{_now_vn('%H:%M:%S')}  ✖ Lỗi     Không chốt được sọt (mất mạng?) — đã hoàn tác"))
+                    self.root.after(0, lambda: self.listbox.itemconfig(0, fg="#ef4444"))
+                    return
+                name = result.get("name", f"Sọt {closing_seq}")
+                total = result.get("total", 0)
+                by = result.get("by_carrier", {})
+                detail = " | ".join(f"{k}:{v}" for k, v in by.items()) or "(rỗng)"
                 self.root.after(0, lambda: self.listbox.insert(0,
-                    f"{_now_vn('%H:%M:%S')}  ✖ Lỗi     Không chốt được sọt (mất mạng?)"))
-                self.root.after(0, lambda: self.listbox.itemconfig(0, fg="#ef4444"))
-                return
-            name = result.get("name", f"Sọt {closing_seq}")
-            total = result.get("total", 0)
-            by = result.get("by_carrier", {})
-            detail = " | ".join(f"{k}:{v}" for k, v in by.items()) or "(rỗng)"
-            self.root.after(0, lambda: self.listbox.insert(0,
-                f"{_now_vn('%H:%M:%S')}  ✅ Chốt {name}  Total {total} — {detail}"))
-            self.root.after(0, lambda: self.listbox.itemconfig(0, fg="#22c55e"))
-            # TĂNG seq cho sọt kế tiếp + cập nhật label header
-            self.current_basket_seq = closing_seq + 1
-            new_seq = self.current_basket_seq
-            self.root.after(0, lambda: self.current_basket_lbl.config(
-                text=f"🟢 Đang quét vào Sọt {new_seq}"))
-            self.root.after(0, self._pull_all)  # cập nhật danh sách sọt ngay
+                    f"{_now_vn('%H:%M:%S')}  ✅ Chốt {name}  Total {total} — {detail}"))
+                self.root.after(0, lambda: self.listbox.itemconfig(0, fg="#22c55e"))
+                self.root.after(0, self._pull_all)  # cập nhật danh sách sọt ngay
+            finally:
+                self._closing_in_progress = False
         threading.Thread(target=do, daemon=True).start()
 
     def _render_baskets(self):
