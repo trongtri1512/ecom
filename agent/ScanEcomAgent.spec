@@ -3,14 +3,46 @@
 # Đóng thành 1 file .exe, chạy ngầm (không cửa sổ console), chỉ hiện icon khay.
 # Build:  pyinstaller --noconfirm --clean ScanEcomAgent.spec
 
+import os
+import sys
+import sysconfig
+
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 block_cipher = None
 
-# Bundle rõ ràng tcl/tk data + binaries. Trên 1 số máy Windows, PyInstaller
-# 6.11+ không tự bundle _tk_data -> exe crash "Tk data directory not found".
-_tk_datas = collect_data_files('tkinter', include_py_files=False)
-_tk_bins = collect_dynamic_libs('tkinter')
+# --- BUNDLE TKINTER MANUAL ---
+# PyInstaller onefile mode + Python 3.12+ đôi khi không tự bundle tcl/tk data.
+# Chạy sẽ crash: "Tk data directory _tk_data / tk8.6 not found".
+# Fix: copy TAY tcl/, tk/ (Lib) + tcl86t.dll, tk86t.dll (DLLs) từ Python install.
+#
+# Tìm Python install prefix từ sysconfig.
+_py_prefix = sysconfig.get_config_var("prefix") or os.path.dirname(sys.executable)
+
+# tcl/tk libraries (chứa init.tcl, tk.tcl, ...)
+_tcl_dir = os.path.join(_py_prefix, "tcl")
+_tk_datas = []
+if os.path.isdir(_tcl_dir):
+    # Bundle toàn bộ tcl/ giữ nguyên cấu trúc.
+    # PyInstaller expect nó ở root MEIPASS (Tcl/Tk hook set TCL_LIBRARY=$MEIPASS/tcl/tclX.X).
+    for root, dirs, files in os.walk(_tcl_dir):
+        for f in files:
+            src = os.path.join(root, f)
+            rel = os.path.relpath(src, _py_prefix)  # giữ prefix "tcl/..." hoặc "tk/..."
+            _tk_datas.append((src, os.path.dirname(rel)))
+
+# DLLs (tcl86t.dll, tk86t.dll, tcl-libtommath.dll,...)
+_dlls_dir = os.path.join(_py_prefix, "DLLs")
+_tk_bins = []
+if os.path.isdir(_dlls_dir):
+    for f in os.listdir(_dlls_dir):
+        lf = f.lower()
+        if (lf.startswith("tcl") or lf.startswith("tk") or lf == "_tkinter.pyd") and lf.endswith((".dll", ".pyd")):
+            _tk_bins.append((os.path.join(_dlls_dir, f), "."))
+
+# Fallback thêm PyInstaller's collect helpers (đề phòng có thêm thứ gì bị bỏ sót).
+_tk_datas += collect_data_files("tkinter", include_py_files=False)
+_tk_bins += collect_dynamic_libs("tkinter")
 
 a = Analysis(
     ['scanner_agent.py'],
@@ -22,7 +54,7 @@ a = Analysis(
     # (khớp GitHub Actions tag → auto-update mới compare đúng).
     datas=[('VERSION', '.')] + _tk_datas,
     # pystray/PIL nạp backend động; tkinter cho cửa sổ GUI -> khai báo để gom đủ.
-    hiddenimports=['pystray._win32', 'PIL._tkinter_finder', 'tkinter', 'tkinter.ttk'],
+    hiddenimports=['pystray._win32', 'PIL._tkinter_finder', 'tkinter', 'tkinter.ttk', '_tkinter'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
