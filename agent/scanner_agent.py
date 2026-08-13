@@ -715,8 +715,18 @@ class AgentWindow:
         self.status_lbl = tk.Label(top, text="● Đang kết nối…", fg="#94a3b8", bg=self.PANEL,
                                    font=("Segoe UI", 10))
         self.status_lbl.pack(side="right", padx=12)
+        # Nút "Kiểm tra cập nhật" nằm ngay cạnh label version (bên phải label).
+        # Pack theo thứ tự right→left: nút pack sau sẽ nằm BÊN TRÁI cái pack trước,
+        # nên để nút cùng padx=0 rồi đến label version.
+        self.btn_check_update = tk.Button(
+            top, text="🔄 Kiểm tra cập nhật", command=self._check_update_now,
+            bg="#0f172a", fg="#93c5fd", relief="flat", cursor="hand2",
+            font=("Segoe UI", 9), padx=8, pady=2,
+            activebackground="#1e293b", activeforeground="#dbeafe",
+        )
+        self.btn_check_update.pack(side="right", padx=(0, 12))
         tk.Label(top, text=f"Máy: {cfg['name']} | v{CURRENT_VERSION}", fg="#94a3b8", bg=self.PANEL,
-                 font=("Segoe UI", 9)).pack(side="right", padx=12)
+                 font=("Segoe UI", 9)).pack(side="right", padx=(12, 4))
 
         # ---- Thân: 3 cột (mã 1/8, KPI 4/8, bàn giao/sọt 3/8) ----
         body = tk.Frame(self.root, bg=self.BG)
@@ -1074,6 +1084,55 @@ class AgentWindow:
                 carrier = parts[-1] if len(parts) >= 3 else sid
                 self.listbox.insert(0, f"{time.strftime('%H:%M:%S')}  📤 Import OPS   {carrier}: {sid}")
                 self.listbox.itemconfig(0, fg="#3b82f6")
+
+    # --- Cập nhật thủ công ---
+    def _check_update_now(self):
+        """User bấm nút "🔄 Kiểm tra cập nhật".
+
+        Flow: query API version ở thread nền → bounce về main thread hiện dialog
+        → user confirm → spawn updater ở thread nền (updater sẽ os._exit).
+        """
+        from tkinter import messagebox
+
+        def query():
+            try:
+                r = self.state["sender"].session.get(
+                    self.cfg["url"] + "/api/agent/version", timeout=8
+                )
+                if r.status_code != 200:
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Lỗi kết nối", f"Server trả về HTTP {r.status_code}"))
+                    return
+                data = r.json()
+                latest = data.get("latest_version") or ""
+                self.root.after(0, lambda: show_result(latest))
+            except Exception as ex:
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Lỗi", f"Không kiểm được cập nhật: {ex}"))
+
+        def show_result(latest: str):
+            if _parse_version(latest) <= _parse_version(CURRENT_VERSION):
+                messagebox.showinfo(
+                    "Đã là bản mới nhất",
+                    f"Phiên bản hiện tại: v{CURRENT_VERSION}\n"
+                    f"Phiên bản trên server: v{latest}\n\n"
+                    f"Không cần cập nhật.")
+                return
+            ok = messagebox.askyesno(
+                "Có phiên bản mới",
+                f"Server có v{latest} (hiện tại v{CURRENT_VERSION}).\n\n"
+                f"Agent sẽ tự tải, build lại và khởi động lại.\n"
+                f"Quá trình mất ~1 phút.\n\n"
+                f"Tiếp tục cập nhật ngay?")
+            if not ok:
+                return
+            # Chạy check_and_apply_update ở thread nền — nó sẽ os._exit(0) khi xong.
+            threading.Thread(
+                target=lambda: check_and_apply_update(self.cfg["url"], self.cfg["api_key"]),
+                daemon=True
+            ).start()
+
+        threading.Thread(target=query, daemon=True).start()
 
     # --- Sọt ---
     MIN_CODES_PER_BASKET = 10  # yêu cầu tối thiểu để chốt 1 sọt
