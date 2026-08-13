@@ -19,7 +19,7 @@ import sqlite3
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -92,6 +92,39 @@ def _read_version() -> str:
 
 
 CURRENT_VERSION = _read_version()
+
+
+# Múi giờ Việt Nam để hiển thị thời gian từ server (server lưu UTC).
+VN_TZ = timezone(timedelta(hours=7))
+
+
+def _now_vn(fmt: str = "%H:%M:%S") -> str:
+    """Giờ hiện tại theo VN (+7), KHÔNG phụ thuộc timezone máy local.
+
+    Máy Windows đặt sai timezone (VD +8, UTC) vẫn hiển thị đúng giờ VN.
+    """
+    return datetime.now(timezone.utc).astimezone(VN_TZ).strftime(fmt)
+
+
+def _fmt_vn_time(iso_str: str, fmt: str = "%H:%M:%S") -> str:
+    """Parse ISO UTC string từ server -> hiển thị giờ VN (+7).
+
+    - Nếu chuỗi có timezone info (có +00:00, Z, +07:00) -> parse chính xác.
+    - Nếu không có tz -> giả định UTC (backend luôn dùng UTC).
+    - Lỗi parse -> fallback về cắt chuỗi thô.
+    """
+    if not iso_str:
+        return ""
+    try:
+        # datetime.fromisoformat hỗ trợ +00:00 nhưng không hỗ trợ 'Z' trên Py<3.11.
+        s = iso_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(VN_TZ).strftime(fmt)
+    except Exception:
+        # Fallback thô nếu ISO malformed.
+        return iso_str[11:19] if len(iso_str) >= 19 else iso_str
 
 
 def _agent_root_dir() -> str:
@@ -1037,7 +1070,7 @@ class AgentWindow:
                 if res and res.get("status") == "ok":
                     count = res.get("count", 0)
                     sid = res.get("session_id", "")
-                    self.listbox.insert(0, f"{time.strftime('%H:%M:%S')}  📤 Bàn giao 3PL {carrier} ({count} đơn) - {sid}")
+                    self.listbox.insert(0, f"{_now_vn('%H:%M:%S')}  📤 Bàn giao 3PL {carrier} ({count} đơn) - {sid}")
                     messagebox.showinfo("Bàn giao thành công", f"Đã đẩy {count} đơn của {carrier} lên OPS.\nMã phiên: {sid}")
                 elif res and res.get("status") == "empty":
                     messagebox.showwarning("Không có đơn", res.get("message", "Không có mã nào chờ lấy hàng."))
@@ -1098,7 +1131,7 @@ class AgentWindow:
             qty = s.get("count", 0)
             status = "Thành công" if s.get("level") == "success" else "Lỗi"
             creator = "Hệ thống"
-            date_str = (s.get("created_at") or "")[:19].replace("T", " ")
+            date_str = _fmt_vn_time(s.get("created_at") or "", "%Y-%m-%d %H:%M:%S")
 
             self.tree_sessions.insert("", "end", values=(
                 stt, carrier, session_id, type_str, qty, qty, status, creator, date_str
@@ -1113,7 +1146,7 @@ class AgentWindow:
                 # sid format: YYYYMMDD-HHMMSS-CARRIER
                 parts = sid.split("-")
                 carrier = parts[-1] if len(parts) >= 3 else sid
-                self.listbox.insert(0, f"{time.strftime('%H:%M:%S')}  📤 Import OPS   {carrier}: {sid}")
+                self.listbox.insert(0, f"{_now_vn('%H:%M:%S')}  📤 Import OPS   {carrier}: {sid}")
                 self.listbox.itemconfig(0, fg="#3b82f6")
 
     # --- Cập nhật thủ công ---
@@ -1196,7 +1229,7 @@ class AgentWindow:
             result = self.state["sender"].close_basket(basket_seq=closing_seq)
             if result is None:
                 self.root.after(0, lambda: self.listbox.insert(0,
-                    f"{time.strftime('%H:%M:%S')}  ✖ Lỗi     Không chốt được sọt (mất mạng?)"))
+                    f"{_now_vn('%H:%M:%S')}  ✖ Lỗi     Không chốt được sọt (mất mạng?)"))
                 self.root.after(0, lambda: self.listbox.itemconfig(0, fg="#ef4444"))
                 return
             name = result.get("name", f"Sọt {closing_seq}")
@@ -1204,7 +1237,7 @@ class AgentWindow:
             by = result.get("by_carrier", {})
             detail = " | ".join(f"{k}:{v}" for k, v in by.items()) or "(rỗng)"
             self.root.after(0, lambda: self.listbox.insert(0,
-                f"{time.strftime('%H:%M:%S')}  ✅ Chốt {name}  Total {total} — {detail}"))
+                f"{_now_vn('%H:%M:%S')}  ✅ Chốt {name}  Total {total} — {detail}"))
             self.root.after(0, lambda: self.listbox.itemconfig(0, fg="#22c55e"))
             # TĂNG seq cho sọt kế tiếp + cập nhật label header
             self.current_basket_seq = closing_seq + 1
@@ -1280,7 +1313,8 @@ class AgentWindow:
             details = " | ".join(details_arr) if details_arr else "Trống"
             
             # Vì tab bên phải hẹp: chỉ hiện HH:MM:SS (baskets đều là hôm nay).
-            time_str = (b.get("closed_at") or "")[11:19]
+            # Server trả UTC -> convert +7 để đúng giờ VN.
+            time_str = _fmt_vn_time(b.get("closed_at") or "", "%H:%M:%S")
             self.tree_baskets.insert("", "end", values=(b_id, seq, total, details, time_str))
 
     def _post_basket(self):
@@ -1344,7 +1378,7 @@ class AgentWindow:
 
     def _add_row(self, ev):
         code, result = ev["code"], ev["result"]
-        t = time.strftime("%H:%M:%S")
+        t = _now_vn("%H:%M:%S")
         label = self.LABELS.get(result, result)
         self.listbox.insert(0, f"{t}  {label:14s} {code}")
         self.listbox.itemconfig(0, fg=self.COLORS.get(result, "#e2e8f0"))
