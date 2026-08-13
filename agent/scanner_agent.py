@@ -186,27 +186,45 @@ def check_and_apply_update(server_url: str, api_key: str) -> bool:
         print("[AutoUpdate] Đã ghi đè mã nguồn thành công. Chuẩn bị kịch bản tự động build lại .exe...")
 
         bat_path = os.path.join(tempfile.gettempdir(), "scanecom_updater.bat")
+        current_pid = os.getpid()
         if getattr(sys, "frozen", False):
             exec_path = sys.executable
+            exec_name = os.path.basename(exec_path)
+            # LƯU Ý: taskkill /F /IM chỉ giết đúng file .exe cùng tên. Vòng lặp
+            # để chắc chắn KHÔNG có instance nào của agent còn sót — kể cả các
+            # bản mở trước đó cũng bị dọn (tránh multi-instance chồng nhau).
             bat_script = f"""@echo off
 chcp 65001 > nul
-echo [UPDATE] Dang cho ScanEcomAgent.exe dong...
-timeout /t 2 /nobreak > nul
+echo [UPDATE] Dang dung TAT CA instance {exec_name} cu (PID hien tai: {current_pid})...
+:killloop
+tasklist /FI "IMAGENAME eq {exec_name}" 2>NUL | find /I "{exec_name}" >NUL
+if not errorlevel 1 (
+    taskkill /F /IM "{exec_name}" >NUL 2>&1
+    timeout /t 1 /nobreak > nul
+    goto killloop
+)
+echo [UPDATE] Da dong het instance cu.
 
 cd /d "{target_root}"
 
-echo [UPDATE] Dang tu dong build lai ScanEcomAgent.exe tu code source py moi...
+echo [UPDATE] Dang tu dong build lai {exec_name} tu code source py moi...
 powershell -ExecutionPolicy Bypass -File build_exe.ps1
+if errorlevel 1 (
+    echo [ERROR] Build that bai. Khong khoi dong lai — tranh chay ban cu tren code moi.
+    pause
+    exit /b 1
+)
 
-if exist "{exec_path}" (
+if exist "dist\\{exec_name}" (
     echo [UPDATE] Build thanh cong! Dang khoi dong lai Agent...
+    start "" "dist\\{exec_name}"
+) else if exist "{exec_path}" (
+    echo [UPDATE] Fallback exec_path...
     start "" "{exec_path}"
-) else if exist "dist\\ScanEcomAgent.exe" (
-    echo [UPDATE] Build thanh cong! Dang khoi dong lai Agent...
-    start "" "dist\\ScanEcomAgent.exe"
 ) else (
-    echo [ERROR] Build that bai! Chay lai ban hien tai...
-    start "" "{exec_path}"
+    echo [ERROR] Khong tim thay file .exe sau build. Kiem tra thu cong.
+    pause
+    exit /b 1
 )
 
 del "%~f0"
@@ -216,7 +234,8 @@ del "%~f0"
             main_script = os.path.join(target_root, "scanner_agent.py")
             bat_script = f"""@echo off
 chcp 65001 > nul
-echo [UPDATE] Dang cho Agent python dong...
+echo [UPDATE] Dang dung Python agent cu (PID {current_pid})...
+taskkill /F /PID {current_pid} >NUL 2>&1
 timeout /t 2 /nobreak > nul
 
 cd /d "{target_root}"
@@ -229,8 +248,13 @@ del "%~f0"
             f.write(bat_script)
 
         subprocess.Popen(["cmd.exe", "/c", bat_path], creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0)
-        print(f"[AutoUpdate] Đã khởi chạy script updater. Agent v{CURRENT_VERSION} tự thoát.")
-        sys.exit(0)
+        print(f"[AutoUpdate] Đã khởi chạy updater. Agent v{CURRENT_VERSION} sẽ bị taskkill từ updater.")
+        # KHÔNG dùng sys.exit(0) — nó chỉ raise SystemExit ở thread hiện tại,
+        # tk mainloop + pystray + pynput listener trên các thread khác vẫn sống.
+        # Dùng os._exit(0) để terminate CẢ process ngay lập tức, an toàn vì
+        # updater.bat cũng sẽ taskkill để phòng trường hợp bản .exe khác cấu
+        # trúc thread khiến _exit không kịp kill hết.
+        os._exit(0)
         return True
 
     except Exception as e:
