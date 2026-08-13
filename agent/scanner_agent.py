@@ -147,6 +147,27 @@ def check_and_apply_update(server_url: str, api_key: str) -> bool:
         if not download_url or _parse_version(latest_ver) <= _parse_version(CURRENT_VERSION):
             return False
 
+        # Anti-loop: nếu vừa update sang latest_ver trong 10 phút mà agent vẫn
+        # thấy mình cũ hơn -> chắc chắn bundle sai (MEIPASS thiếu VERSION hoặc
+        # spec cũ). Bỏ qua để user chú ý, không loop vô hạn.
+        marker = os.path.join(tempfile.gettempdir(), f"scanecom_upd_{latest_ver}.mark")
+        try:
+            if os.path.exists(marker):
+                age = time.time() - os.path.getmtime(marker)
+                if age < 600:  # 10 phút
+                    print(f"[AutoUpdate] SKIP: vừa update sang v{latest_ver} cách {int(age)}s nhưng "
+                          f"CURRENT_VERSION vẫn là v{CURRENT_VERSION}. Nghi build hỏng bundle VERSION. "
+                          f"Bỏ qua để tránh loop. Xóa file {marker} để thử lại.")
+                    return False
+        except Exception:
+            pass
+        # Đánh dấu để lần sau detect loop.
+        try:
+            with open(marker, "w") as f:
+                f.write(f"{latest_ver}\n{CURRENT_VERSION}\n{time.time()}")
+        except Exception:
+            pass
+
         print(f"[AutoUpdate] Phát hiện phiên bản mới: v{latest_ver} (hiện tại v{CURRENT_VERSION}). Đang tải mã nguồn...")
 
         dl_full_url = download_url if download_url.startswith("http") else f"{server_url}{download_url}"
