@@ -594,17 +594,64 @@ def _force_auto_import_all():
             if result.get("ok"):
                 session_id = result.get("ops_session_id") or stamp
                 failed_codes = result.get("failed_codes", [])
+                failed_details = result.get("failed_details", [])
                 successful_codes = [c for c in codes if c not in failed_codes]
                 entered = len(successful_codes)
-                
+
+                # Track basket_id nào có mã thành công để update ops_sessions_json
+                # + ops_status của basket đó (tránh UI hiển thị "Chưa bàn giao"
+                # dù server đã đẩy xong).
+                affected_basket_ids: set = set()
                 for r in scans:
                     if r.code in successful_codes:
                         r.session_id = session_id
-                        
-                if failed_codes:
-                    db.execute(delete(Scan).where(Scan.code.in_(failed_codes)))
-                    
+                        if r.basket_id:
+                            affected_basket_ids.add(r.basket_id)
+
+                # KHÔNG xóa mã lỗi khỏi DB (giữ debug + hiển thị đúng total).
+                # for r in scans: if r.code in failed_codes -> giữ nguyên.
+
+                # Update từng basket bị ảnh hưởng: thêm carrier -> session_id vào
+                # ops_sessions_json; tính lại ops_status (done/partial); đưa lỗi
+                # vào ops_errors_json (nếu có).
+                import json as _json_fi
+                from datetime import datetime as _dt, timezone as _tz
+                now = _dt.now(_tz.utc)
+                for bid in affected_basket_ids:
+                    basket = db.scalar(select(Basket).where(Basket.id == bid))
+                    if not basket:
+                        continue
+                    # ops_sessions: gộp session mới
+                    try:
+                        sess = _json_fi.loads(basket.ops_sessions_json or "{}")
+                    except Exception:
+                        sess = {}
+                    sess[carrier] = session_id
+                    basket.ops_sessions_json = _json_fi.dumps(sess, ensure_ascii=False)
+                    # ops_errors: append lỗi của carrier này
+                    if failed_details:
+                        try:
+                            errs = _json_fi.loads(basket.ops_errors_json or "[]")
+                        except Exception:
+                            errs = []
+                        for fd in failed_details:
+                            errs.append({"code": fd.get("code", "-"), "carrier": carrier,
+                                          "reason": fd.get("reason", "OPS loại")})
+                        basket.ops_errors_json = _json_fi.dumps(errs, ensure_ascii=False)[:8000]
+                    # ops_status: tính lại dựa vào tổng số session vs số DVVC có mã trong sọt
+                    scans_in_basket = db.scalars(select(Scan).where(Scan.basket_id == bid)).all()
+                    carriers_in_basket = {s.carrier for s in scans_in_basket}
+                    covered = set(sess.keys()) & carriers_in_basket
+                    remaining = carriers_in_basket - covered
+                    total_errors = len(_json_fi.loads(basket.ops_errors_json or "[]"))
+                    if not remaining:
+                        basket.ops_status = "partial" if total_errors > 0 else "done"
+                    else:
+                        # Còn DVVC chưa đẩy -> vẫn coi là chưa hoàn thành (giữ trạng thái cũ trừ khi hiện có gì).
+                        basket.ops_status = basket.ops_status or ""
+                    basket.ops_handed_at = now
                 db.commit()
+
                 _log_ops(db, "success", "force_import", carrier, entered,
                          session_id, f"Hoàn thành sọt: Đẩy tuần tự {entered} mã.", "")
                 events.publish("auto_import", {"carrier": carrier, "count": entered, "session_id": session_id})
@@ -1250,6 +1297,61 @@ def list_baskets(
             it["real_by_carrier"] = real_by
             it["total_mismatch"] = it["real_total"] != it.get("total", 0)
     return {"items": items}
+
+
+@app.post("/api/baskets/repair-sessions")
+def repair_basket_sessions(db: Session = Depends(get_db)):
+    """Sync ops_sessions_json + ops_status của basket từ Scan.session_id đã có.
+
+    Dùng để chữa data cũ khi _force_auto_import_all đã đẩy mã lên OPS nhưng
+    KHÔNG update basket.ops_sessions_json (bug trước 2026-08-13). Sau khi chạy:
+    - Mỗi basket có thêm sessions của carrier đã đẩy.
+    - ops_status: 'done' nếu mọi carrier đều có session, 'partial' nếu có lỗi,
+      giữ '' nếu còn carrier chưa có session.
+    """
+    import json as _json_rp
+    from datetime import datetime as _dt, timezone as _tz
+    baskets = db.scalars(select(Basket)).all()
+    updated = 0
+    for b in baskets:
+        scans = db.scalars(select(Scan).where(Scan.basket_id == b.id)).all()
+        if not scans:
+            continue
+        carriers_in = {s.carrier for s in scans}
+        # session_id mới nhất của mỗi carrier trong sọt.
+        sessions_by_carrier: dict = {}
+        for s in scans:
+            if s.session_id and s.session_id.strip():
+                sessions_by_carrier.setdefault(s.carrier, s.session_id)
+        if not sessions_by_carrier:
+            continue
+        # Gộp vào ops_sessions_json (không đè cái đã có, chỉ bổ sung thiếu).
+        try:
+            existing = _json_rp.loads(b.ops_sessions_json or "{}")
+        except Exception:
+            existing = {}
+        added = 0
+        for c, sid in sessions_by_carrier.items():
+            if c not in existing:
+                existing[c] = sid
+                added += 1
+        if added == 0:
+            continue
+        b.ops_sessions_json = _json_rp.dumps(existing, ensure_ascii=False)
+        covered = set(existing.keys()) & carriers_in
+        remaining = carriers_in - covered
+        try:
+            errs = _json_rp.loads(b.ops_errors_json or "[]")
+        except Exception:
+            errs = []
+        if not remaining:
+            b.ops_status = "partial" if len(errs) > 0 else "done"
+        if not b.ops_handed_at:
+            b.ops_handed_at = _dt.now(_tz.utc)
+        updated += 1
+    db.commit()
+    return {"status": "done", "baskets_updated": updated,
+            "message": f"Đã sync sessions cho {updated} sọt."}
 
 
 @app.post("/api/baskets/backfill")
