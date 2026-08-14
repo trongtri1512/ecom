@@ -91,8 +91,30 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                           wait_until="networkidle")
                 page.wait_for_timeout(1500)
             if not scan_input:
-                _save_screenshot(page, "scan_input_not_found")
-                return {"ok": False, "error": "Không tìm thấy ô nhập mã quét (đã thử 3 lần reload)"}
+                # Detect: nếu page URL đang ở auth.vnfai.com -> session Keycloak
+                # het han giua chung -> login lai va thu them 1 lan.
+                current_url = ""
+                try:
+                    current_url = page.url or ""
+                except Exception:
+                    pass
+                if "auth.vnfai.com" in current_url or "openid-connect/auth" in current_url:
+                    print(f"[scan-import] Session Keycloak het han, dang login lai...")
+                    try:
+                        _login(page)
+                        page.goto(f"{config.OPS_URL}/#/tpl-sessions/new/{template_id}",
+                                  wait_until="networkidle", timeout=30000)
+                        page.wait_for_timeout(2000)
+                        page.wait_for_selector(_SCAN_SELECTORS, timeout=15000, state="visible")
+                        scan_input = page.locator(_SCAN_SELECTORS).first
+                    except Exception as e:
+                        print(f"[scan-import] Re-login that bai: {e}")
+                        scan_input = None
+                if not scan_input:
+                    shot = _save_screenshot(page, "scan_input_not_found")
+                    return {"ok": False,
+                            "error": f"Khong tim thay o nhap ma quet (URL cuoi: {current_url[:100]})",
+                            "screenshot_file": shot}
 
             # 4) Gõ từng mã → Enter (hoặc click nút >>)
             entered = 0
