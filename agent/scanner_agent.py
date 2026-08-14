@@ -613,9 +613,13 @@ class Sender:
         return None
 
     def get_sessions_today(self):
-        """Danh sách mã phiên đã import từ ops_logs. None nếu lỗi."""
+        """Danh sách bàn giao hôm nay theo (Sọt, ĐVVC) - filter theo máy này."""
         try:
-            r = self.session.get(self.cfg["url"] + "/api/ops/sessions", timeout=8)
+            r = self.session.get(
+                self.cfg["url"] + "/api/ops/sessions",
+                params={"agent_name": self.cfg["name"]},
+                timeout=8,
+            )
             if r.status_code == 200:
                 return r.json().get("items", [])
         except requests.RequestException:
@@ -1002,25 +1006,23 @@ class AgentWindow:
                         font=("Segoe UI", 9, "bold"), borderwidth=0)
         style.map("Treeview", background=[("selected", "#3b82f6")])
 
-        # --- Treeview Sessions ---
-        cols = ("stt", "carrier", "session_id", "type", "qty", "qty_out", "status", "creator", "date")
+        # --- Treeview Sessions: 5 cột ---
+        # Sọt | ĐVVC | SL | Mã phiên giao | Thời gian
+        cols = ("seq", "carrier", "count", "session_id", "time")
         self.tree_sessions = ttk.Treeview(self.sessions_tab, columns=cols, show="headings")
         self.tree_sessions.pack(side="left", fill="both", expand=True)
-        
-        for c, name in zip(cols, ["#", "Nhà vận chuyển", "Mã phiên bàn giao", "Loại phiên", "Số kiện hàng", "SL đơn xuất", "Trạng thái", "Người tạo", "Ngày tạo"]):
-            self.tree_sessions.heading(c, text=name)
-        
-        # Cột phải hẹp: chỉ giữ 3 cột chính, ẩn cột phụ.
-        # stretch=NO cho MỌI cột để tree không tự nới rộng (gây nhảy grid).
-        self.tree_sessions.column("stt", width=28, anchor="center", stretch=tk.NO)
-        self.tree_sessions.column("carrier", width=90, anchor="w", stretch=tk.NO)
-        self.tree_sessions.column("session_id", width=150, anchor="w", stretch=tk.YES)
-        self.tree_sessions.column("type", width=0, stretch=tk.NO)
-        self.tree_sessions.column("qty", width=60, anchor="center", stretch=tk.NO)
-        self.tree_sessions.column("qty_out", width=0, stretch=tk.NO)
-        self.tree_sessions.column("status", width=80, anchor="center", stretch=tk.NO)
-        self.tree_sessions.column("creator", width=0, stretch=tk.NO)
-        self.tree_sessions.column("date", width=0, stretch=tk.NO)
+
+        self.tree_sessions.heading("seq", text="Sọt")
+        self.tree_sessions.heading("carrier", text="ĐVVC")
+        self.tree_sessions.heading("count", text="SL")
+        self.tree_sessions.heading("session_id", text="Mã phiên giao")
+        self.tree_sessions.heading("time", text="Thời gian")
+
+        self.tree_sessions.column("seq", width=48, anchor="center", stretch=tk.NO)
+        self.tree_sessions.column("carrier", width=100, anchor="w", stretch=tk.NO)
+        self.tree_sessions.column("count", width=44, anchor="center", stretch=tk.NO)
+        self.tree_sessions.column("session_id", width=140, anchor="w", stretch=tk.YES)
+        self.tree_sessions.column("time", width=110, anchor="center", stretch=tk.NO)
         
         sb_sessions = tk.Scrollbar(self.sessions_tab, command=self.tree_sessions.yview)
         sb_sessions.pack(side="right", fill="y")
@@ -1231,22 +1233,21 @@ class AgentWindow:
         if not data:
             return
 
-        # Phát hiện phiên MỚI so với lần render trước -> hiện thông báo (bíp)
+        # Phát hiện phiên MỚI so với lần render trước -> hiện thông báo (bíp).
+        # Server (endpoint /api/ops/sessions mới) trả:
+        #   {seq, carrier, count, session_id, time}
         current_ids = set()
-        for idx, s in enumerate(data):
+        for s in data:
             session_id = s.get("session_id", "")
             current_ids.add(session_id)
-            
-            stt = idx + 1
+
+            seq = s.get("seq", "-")
             carrier = s.get("carrier", "")
-            type_str = "Phiên giao"
-            qty = s.get("count", 0)
-            status = "Thành công" if s.get("level") == "success" else "Lỗi"
-            creator = "Hệ thống"
-            date_str = _fmt_vn_time(s.get("created_at") or "", "%Y-%m-%d %H:%M:%S")
+            count = s.get("count", 0)
+            time_str = _fmt_vn_time(s.get("time") or "", "%d/%m %H:%M")
 
             self.tree_sessions.insert("", "end", values=(
-                stt, carrier, session_id, type_str, qty, qty, status, creator, date_str
+                f"Sọt {seq}", carrier, count, session_id, time_str
             ))
 
         new_ids = current_ids - self._last_session_ids

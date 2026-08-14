@@ -771,12 +771,15 @@ def ops_import_now(
 def ops_import_basket(
     basket_id: int = Query(..., description="ID của sọt cần đẩy lên OPS"),
     carrier: str | None = Query(default=None, description="Chỉ đẩy 1 hãng cụ thể (SPX/J&T/...). Bỏ trống = tất cả."),
+    force: bool = Query(default=False, description="True = re-import CẢ mã đã có session_id (dùng khi user đã xóa phiên trên OPS)"),
     db: Session = Depends(get_db)
 ):
     """Kích hoạt đẩy các kiện hàng của một sọt cụ thể lên OPS.
 
-    Nếu truyền `carrier` -> chỉ đẩy mã của hãng đó trong sọt (đưa thao tác
-    tách theo từng ĐVVC lên Admin).
+    Nếu truyền `carrier` -> chỉ đẩy mã của hãng đó trong sọt.
+    Nếu truyền `force=true` -> đẩy CẢ mã đã có session_id (dùng khi user đã
+    xóa phiên trên OPS và muốn tạo phiên mới sạch). Đồng thời clear session_id
+    của mã + xóa entry trong ops_sessions_json cho carrier này TRƯỚC khi đẩy.
     """
     from . import ops_uploader
     if not (config.OPS_USER and config.OPS_PASS):
@@ -785,6 +788,30 @@ def ops_import_basket(
     basket = db.scalar(select(Basket).where(Basket.id == basket_id))
     if not basket:
         raise HTTPException(status_code=404, detail="Không tìm thấy sọt")
+
+    if force:
+        # Reset session_id cho toàn bộ mã của basket (trong 1 carrier nếu có filter)
+        # để chúng được coi là "chưa import" và tham gia batch mới.
+        reset_stmt = select(Scan).where(Scan.basket_id == basket.id)
+        if carrier:
+            reset_stmt = reset_stmt.where(Scan.carrier == carrier)
+        for s in db.scalars(reset_stmt).all():
+            s.session_id = ""
+        # Xóa entry carrier khỏi ops_sessions_json
+        import json as _json_force
+        try:
+            sess = _json_force.loads(basket.ops_sessions_json or "{}")
+        except Exception:
+            sess = {}
+        if carrier:
+            sess.pop(carrier, None)
+        else:
+            sess = {}
+        basket.ops_sessions_json = _json_force.dumps(sess, ensure_ascii=False)
+        # Reset ops_status nếu không còn session nào
+        if not sess:
+            basket.ops_status = ""
+        db.commit()
 
     scan_stmt = select(Scan).where(Scan.basket_id == basket.id, Scan.session_id == "")
     if carrier:
@@ -934,6 +961,43 @@ def api_ops_sync_manual(req: dict, db: Session = Depends(get_db)):
 
 
 # ----------------------------- OPS logs API -----------------------------
+@app.get("/api/ops/sessions")
+def ops_sessions_today(
+    agent_name: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """Danh sách bàn giao hôm nay theo (Sọt, ĐVVC).
+
+    Trả list items: {seq, carrier, count, session_id, time}.
+    Sắp xếp mới nhất trước. Dùng cho tab "Mã phiên OPS" trên agent.
+    """
+    import json as _json_sess
+    frm, _ = period_range("day")
+    stmt = select(Basket).where(Basket.closed_at >= frm)
+    if agent_name:
+        stmt = stmt.where(Basket.source_agent == agent_name)
+    baskets = db.scalars(stmt.order_by(Basket.seq.desc())).all()
+    items: list = []
+    for b in baskets:
+        try:
+            sess_map = _json_sess.loads(b.ops_sessions_json or "{}")
+        except Exception:
+            sess_map = {}
+        try:
+            by_carrier = _json_sess.loads(b.by_carrier_json or "{}")
+        except Exception:
+            by_carrier = {}
+        for carrier, session_id in sess_map.items():
+            items.append({
+                "seq": b.seq,
+                "carrier": carrier,
+                "count": int(by_carrier.get(carrier, 0)),
+                "session_id": session_id,
+                "time": (b.ops_handed_at or b.closed_at).isoformat() if (b.ops_handed_at or b.closed_at) else None,
+            })
+    return {"items": items}
+
+
 @app.get("/api/ops/logs")
 def ops_logs_list(limit: int = Query(default=100, le=1000), db: Session = Depends(get_db)):
     rows = db.scalars(select(OpsLog).order_by(OpsLog.id.desc()).limit(limit)).all()

@@ -764,8 +764,11 @@
         const details = Object.entries(byCarrier).filter(x => x[1] > 0).length
           ? Object.entries(byCarrier).filter(x => x[1] > 0).map(([c, n]) => {
               const done = !!sessionsMap[c];
+              // Đã đẩy: hiện badge + nút "🔁 Đẩy lại" (force re-import — dùng khi
+              // user đã xóa phiên trên OPS và muốn tạo phiên sạch).
               const opsBtn = done
-                ? `<span class="badge-lv success" title="Phiên: ${esc(sessionsMap[c])}" style="font-size:10px;padding:2px 6px;">✓ Đã đẩy</span>`
+                ? `<span class="badge-lv success" title="Phiên: ${esc(sessionsMap[c])}" style="font-size:10px;padding:2px 6px;">✓ Đã đẩy</span>
+                   <button class="btn btn-ghost btn-post-basket-carrier" data-id="${b.id}" data-carrier="${esc(c)}" data-force="1" style="padding:2px 6px;font-size:10px;color:#fbbf24;" title="Đẩy lại ${esc(c)} (dùng khi đã xóa phiên trên OPS)">🔁</button>`
                 : `<button class="btn btn-primary btn-post-basket-carrier" data-id="${b.id}" data-carrier="${esc(c)}" style="padding:2px 8px;font-size:11px;" title="Bàn giao riêng ${esc(c)} lên OPS">📤 OPS</button>`;
               const xlsxBtn = `<button class="btn btn-ghost btn-export-basket-carrier" data-id="${b.id}" data-carrier="${esc(c)}" style="padding:2px 6px;font-size:11px;" title="Xuất Excel ${esc(c)} của sọt này">⬇ Excel</button>`;
               return `<div style="display:flex;gap:6px;align-items:center;margin:2px 0;">
@@ -851,12 +854,17 @@
     if (carrierBtn) {
       const id = carrierBtn.dataset.id;
       const carrier = carrierBtn.dataset.carrier;
-      if (!confirm(`Đẩy MÃ CỦA ${carrier} trong sọt này lên OPS?`)) return;
+      const isForce = carrierBtn.dataset.force === "1";
+      const confirmMsg = isForce
+        ? `⚠ ĐẨY LẠI ${carrier} trong sọt này lên OPS?\n\nBAT BUỘC bạn phải XÓA phiên cũ trên OPS trước, nếu không mã sẽ báo trùng.\n\nTiếp tục?`
+        : `Đẩy MÃ CỦA ${carrier} trong sọt này lên OPS?`;
+      if (!confirm(confirmMsg)) return;
       const oldT = carrierBtn.innerHTML;
       carrierBtn.innerHTML = "⏳"; carrierBtn.disabled = true;
       try {
+        const forceParam = isForce ? "&force=true" : "";
         const res = await api(
-          `/api/ops/import-basket?basket_id=${id}&carrier=${encodeURIComponent(carrier)}`,
+          `/api/ops/import-basket?basket_id=${id}&carrier=${encodeURIComponent(carrier)}${forceParam}`,
           { method: "POST" }
         );
         if (res.status === "done") {
