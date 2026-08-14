@@ -57,19 +57,42 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                       wait_until="networkidle")
             page.wait_for_timeout(2000)
 
-            # 3) Tìm ô nhập mã (ô quét mã kiện hàng)
-            #    OPS tự nhận dạng đối tác vận chuyển khi nhập mã đầu tiên,
-            #    KHÔNG cần chọn đối tác thủ công.
-            scan_input = _find_first(page, [
-                "input[placeholder*='kiện hàng']",
-                "input[placeholder*='vận đơn']",
-                "input[placeholder*='đơn hàng']",
-                "input[placeholder*='Quét mã']",
-                "input[placeholder*='quét mã']",
-            ])
+            # 3) Tìm ô nhập mã (ô quét mã kiện hàng).
+            #    OPS đôi khi render chậm -> dùng wait_for_selector với timeout dài
+            #    thay vì poll 1 lần rồi bỏ. Nếu vẫn không có -> reload page 1 lần
+            #    nữa (fix trường hợp OPS bị "kẹt" state cũ khi qua phiên mới).
+            _SCAN_SELECTORS = ("input[placeholder*='kiện hàng'], "
+                               "input[placeholder*='vận đơn'], "
+                               "input[placeholder*='đơn hàng'], "
+                               "input[placeholder*='Quét mã'], "
+                               "input[placeholder*='quét mã']")
+            scan_input = None
+            for attempt in range(1, 4):  # 3 lần thử
+                try:
+                    page.wait_for_selector(_SCAN_SELECTORS, timeout=10000, state="visible")
+                    scan_input = page.locator(_SCAN_SELECTORS).first
+                    if scan_input.is_visible():
+                        break
+                    scan_input = None
+                except Exception:
+                    scan_input = None
+                print(f"[scan-import] Attempt {attempt}: chưa thấy ô nhập, thử reload...")
+                # Đóng dialog phủ nếu có, rồi reload.
+                try:
+                    for close_sel in ["button:has-text('Đóng')", "button:has-text('X')",
+                                       ".nb-dialog button:has-text('OK')"]:
+                        loc = page.locator(close_sel).first
+                        if loc.is_visible():
+                            loc.click(force=True)
+                            page.wait_for_timeout(300)
+                except Exception:
+                    pass
+                page.goto(f"{config.OPS_URL}/#/tpl-sessions/new/{template_id}",
+                          wait_until="networkidle")
+                page.wait_for_timeout(1500)
             if not scan_input:
                 _save_screenshot(page, "scan_input_not_found")
-                return {"ok": False, "error": "Không tìm thấy ô nhập mã quét"}
+                return {"ok": False, "error": "Không tìm thấy ô nhập mã quét (đã thử 3 lần reload)"}
 
             # 4) Gõ từng mã → Enter (hoặc click nút >>)
             entered = 0

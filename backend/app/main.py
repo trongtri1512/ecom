@@ -723,23 +723,26 @@ def ops_import_now(
 @app.post("/api/ops/import-basket")
 def ops_import_basket(
     basket_id: int = Query(..., description="ID của sọt cần đẩy lên OPS"),
+    carrier: str | None = Query(default=None, description="Chỉ đẩy 1 hãng cụ thể (SPX/J&T/...). Bỏ trống = tất cả."),
     db: Session = Depends(get_db)
 ):
-    """Kích hoạt đẩy các kiện hàng của một sọt cụ thể lên OPS."""
+    """Kích hoạt đẩy các kiện hàng của một sọt cụ thể lên OPS.
+
+    Nếu truyền `carrier` -> chỉ đẩy mã của hãng đó trong sọt (đưa thao tác
+    tách theo từng ĐVVC lên Admin).
+    """
     from . import ops_uploader
     if not (config.OPS_USER and config.OPS_PASS):
         raise HTTPException(status_code=400, detail="Thiếu OPS_USER/OPS_PASS trong env")
-        
+
     basket = db.scalar(select(Basket).where(Basket.id == basket_id))
     if not basket:
         raise HTTPException(status_code=404, detail="Không tìm thấy sọt")
-        
-    # CHỈ lấy mã CỦA CHÍNH sọt này (basket_id khớp) và chưa import.
-    # Không dùng scanned_at range vì mã mới quét cùng khoảng có thể lọt vào nhầm.
-    # Fallback theo scanned_at nếu là sọt CŨ (trước khi có basket_id).
-    scans = db.scalars(
-        select(Scan).where(Scan.basket_id == basket.id, Scan.session_id == "")
-    ).all()
+
+    scan_stmt = select(Scan).where(Scan.basket_id == basket.id, Scan.session_id == "")
+    if carrier:
+        scan_stmt = scan_stmt.where(Scan.carrier == carrier)
+    scans = db.scalars(scan_stmt).all()
     if not scans:
         # Fallback tương thích ngược: sọt cũ chưa được gán basket_id (trước khi có
         # migration). Dùng khoảng thời gian + agent như logic cũ.
@@ -1363,6 +1366,38 @@ def export_import_file(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
+
+
+@app.get("/api/export/basket-carrier")
+def export_basket_carrier(
+    basket_id: int = Query(..., description="ID sọt"),
+    carrier: str = Query(..., description="ĐVVC (SPX/J&T/...)"),
+    db: Session = Depends(get_db),
+):
+    """Xuất Excel format import OPS cho MÃ của 1 ĐVVC trong 1 sọt cụ thể."""
+    basket = db.scalar(select(Basket).where(Basket.id == basket_id))
+    if not basket:
+        raise HTTPException(status_code=404, detail="Không tìm thấy sọt")
+    rows = db.scalars(
+        select(Scan).where(
+            Scan.basket_id == basket.id,
+            Scan.carrier == carrier,
+        ).order_by(Scan.scanned_at.asc())
+    ).all()
+    codes = [r.code for r in rows]
+    if not codes:
+        raise HTTPException(status_code=404, detail=f"Không có mã {carrier} trong Sọt {basket.seq}")
+    content = export.to_import_xlsx(codes)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+    safe_carrier = carrier.replace("&", "and").replace(" ", "_")
+    fname = f"Sot{basket.seq}_{safe_carrier}_{stamp}.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 @app.get("/api/export")
 def export_scans(
     format: str = Query(default="xlsx", pattern="^(xlsx|csv)$"),

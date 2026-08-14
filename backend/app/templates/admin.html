@@ -758,7 +758,22 @@
       for (const b of items) {
         const dt = fmtDT(b.closed_at);
         const byCarrier = b.by_carrier || {};
-        const details = Object.entries(byCarrier).filter(x => x[1] > 0).map(x => `${x[0]}: ${x[1]}`).join(" · ") || "(rỗng)";
+        const sessionsMap = b.ops_sessions || {};
+        // Chi tiết: mỗi ĐVVC 1 dòng kèm 2 nút "📤 OPS" (bàn giao riêng hãng) + "⬇" (xuất Excel).
+        // Ẩn nút OPS nếu hãng đó đã có session trong ops_sessions (tránh double-import).
+        const details = Object.entries(byCarrier).filter(x => x[1] > 0).length
+          ? Object.entries(byCarrier).filter(x => x[1] > 0).map(([c, n]) => {
+              const done = !!sessionsMap[c];
+              const opsBtn = done
+                ? `<span class="badge-lv success" title="Phiên: ${esc(sessionsMap[c])}" style="font-size:10px;padding:2px 6px;">✓ Đã đẩy</span>`
+                : `<button class="btn btn-primary btn-post-basket-carrier" data-id="${b.id}" data-carrier="${esc(c)}" style="padding:2px 8px;font-size:11px;" title="Bàn giao riêng ${esc(c)} lên OPS">📤 OPS</button>`;
+              const xlsxBtn = `<button class="btn btn-ghost btn-export-basket-carrier" data-id="${b.id}" data-carrier="${esc(c)}" style="padding:2px 6px;font-size:11px;" title="Xuất Excel ${esc(c)} của sọt này">⬇ Excel</button>`;
+              return `<div style="display:flex;gap:6px;align-items:center;margin:2px 0;">
+                <span style="min-width:110px;"><b>${esc(c)}</b>: ${n}</span>
+                ${opsBtn} ${xlsxBtn}
+              </div>`;
+            }).join("")
+          : `<span style="color:var(--muted);">(rỗng)</span>`;
         // Trạng thái bàn giao OPS
         const status = b.ops_status || "";
         const errorCount = (b.ops_errors || []).length;
@@ -789,7 +804,7 @@
             <td><b>${esc(b.source_agent)}</b></td>
             <td>${esc(b.name)}</td>
             <td style="text-align:right;font-weight:700;color:#4ade80;">${b.total}</td>
-            <td style="font-family:Consolas,monospace;font-size:12px;color:var(--muted);">${esc(details)}</td>
+            <td style="font-size:12px;color:var(--muted);min-width:280px;">${details}</td>
             <td>${statusBadge}</td>
             <td>${sessInfo}</td>
             <td style="text-align:center;">${actionBtn}</td>
@@ -831,7 +846,52 @@
       openBasketLog(b);
       return;
     }
-    // Nút Bàn giao OPS
+    // Nút Bàn giao OPS RIÊNG cho 1 ĐVVC trong sọt
+    const carrierBtn = e.target.closest(".btn-post-basket-carrier");
+    if (carrierBtn) {
+      const id = carrierBtn.dataset.id;
+      const carrier = carrierBtn.dataset.carrier;
+      if (!confirm(`Đẩy MÃ CỦA ${carrier} trong sọt này lên OPS?`)) return;
+      const oldT = carrierBtn.innerHTML;
+      carrierBtn.innerHTML = "⏳"; carrierBtn.disabled = true;
+      try {
+        const res = await api(
+          `/api/ops/import-basket?basket_id=${id}&carrier=${encodeURIComponent(carrier)}`,
+          { method: "POST" }
+        );
+        if (res.status === "done") {
+          let msg = "";
+          for (const r of (res.results || [])) {
+            if (r.status === "ok") {
+              const failTxt = r.failed ? ` (${r.failed} mã lỗi)` : "";
+              msg += `✅ ${r.carrier}: OK ${r.count} mã${failTxt}. Phiên: ${r.session_id}\n`;
+            } else {
+              msg += `❌ ${r.carrier}: ${r.error}\n`;
+            }
+          }
+          alert(`BÀN GIAO ${carrier} - Sọt:\n\n` + (msg || "Không có mã cần đẩy."));
+          loadLogs(); loadBaskets();
+        } else if (res.status === "empty") {
+          alert(res.message);
+        } else {
+          toast("Lỗi", res.message || "Lỗi không xác định", "danger");
+        }
+      } catch (err) { toast("Lỗi", String(err), "danger"); }
+      finally { carrierBtn.innerHTML = oldT; carrierBtn.disabled = false; }
+      return;
+    }
+
+    // Nút Xuất Excel RIÊNG cho 1 ĐVVC trong sọt
+    const xlsxBtn = e.target.closest(".btn-export-basket-carrier");
+    if (xlsxBtn) {
+      const id = xlsxBtn.dataset.id;
+      const carrier = xlsxBtn.dataset.carrier;
+      const url = `/api/export/basket-carrier?basket_id=${id}&carrier=${encodeURIComponent(carrier)}`;
+      window.open(url, "_blank");
+      return;
+    }
+
+    // Nút Bàn giao OPS (toàn sọt, mọi ĐVVC)
     const btn = e.target.closest(".btn-post-basket");
     if (!btn) return;
     const id = btn.dataset.id;
