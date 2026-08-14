@@ -255,23 +255,44 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
             # đó gây ra tình trạng OPS ghi nhận bàn giao khi hàng chưa được đưa đi.
             # (Nếu về sau muốn tự bàn giao, thêm option `handoff=True` vào hàm.)
 
-            # 9) Lấy số lượng thực tế từ giao diện (bởi vì OPS có thể tự động loại bỏ mã trùng)
+            # 9) Lấy số lượng thực tế từ giao diện (OPS có thể loại mã trùng).
+            # QUAN TRỌNG: chỉ mark_failed khi CHẮC CHẮN mã bị loại. Tránh false
+            # positive vì trang detail phiên có phân trang / lazy load / mã ẩn
+            # trong <td> mà inner_text() không lấy được đầy đủ.
             actual_entered = entered
             try:
-                # Tìm phần tử chứa "Số lượng kiện hàng"
-                # Thường OPS hiển thị: "Số lượng kiện hàng bàn giao: 70" hoặc tương tự
                 info_text = page.locator("body").inner_text()
                 import re
-                m_count = re.search(r"(?:Số lượng kiện hàng bàn giao|Số kiện hàng|Số lượng|Tổng số kiện)[\s:]*(\d+)", info_text, re.IGNORECASE)
+                m_count = re.search(
+                    r"(?:Số lượng kiện hàng bàn giao|Số kiện hàng|Số lượng|Tổng số kiện)[\s:]*(\d+)",
+                    info_text, re.IGNORECASE)
                 if m_count:
                     actual_entered = int(m_count.group(1))
-                    
-                # Đối chiếu mã xem mã nào bị OPS âm thầm gạch bỏ (silently dropped)
-                # Nếu mã không có trong text của trang View, chắc chắn nó đã bị loại!
-                for code in codes:
-                    code_s = code.strip()
-                    if code_s not in info_text:
-                        _mark_failed(code_s, "OPS âm thầm loại (không hiện trên phiên)")
+
+                # Số mã BÌNH THƯỜNG bị OPS loại = entered - actual_entered.
+                # Nếu = 0 -> mọi mã OK, KHÔNG check text nữa (tránh false positive).
+                # Nếu > 0 -> có mã bị loại, cần xác định mã nào.
+                expected_dropped = max(0, entered - actual_entered)
+                if expected_dropped == 0:
+                    print(f"[scan_import] entered={entered} = actual_entered={actual_entered} -> tat ca OK, skip silent-drop check")
+                else:
+                    # Chỉ khi thật sự có mã bị loại mới đối chiếu. Nhưng vẫn dùng
+                    # inner_text làm nguồn duy nhất -> có thể miss vì phân trang.
+                    # Cách an toàn: chỉ mark tối đa `expected_dropped` mã đầu tiên
+                    # không tìm thấy trong text. Tránh mark toàn bộ khi text bị
+                    # cắt do phân trang.
+                    silently_dropped = []
+                    for code in codes:
+                        code_s = code.strip()
+                        if code_s not in info_text and code_s not in failed_codes:
+                            silently_dropped.append(code_s)
+                    # Mark chính xác số bị loại theo OPS báo cáo, không nhiều hơn.
+                    for code_s in silently_dropped[:expected_dropped]:
+                        _mark_failed(code_s, "OPS am tham loai (khong hien tren phien)")
+                    if len(silently_dropped) > expected_dropped:
+                        print(f"[scan_import] CANH BAO: {len(silently_dropped)} ma khong tim thay trong "
+                              f"text nhung OPS chi bao loai {expected_dropped}. "
+                              f"Kha nang trang phan trang - chi mark {expected_dropped} ma dau.")
             except Exception as e:
                 print(f"[scan_import] Không đọc được số lượng thực tế: {e}")
 
