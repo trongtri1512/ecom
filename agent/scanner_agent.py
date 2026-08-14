@@ -807,9 +807,10 @@ class AgentWindow:
         "ok": "#16a34a", "ignored": "#f59e0b", "dup": "#ef4444",
         "err": "#ef4444", "net": "#3b82f6",
     }
+    # Chỉ icon, không chữ. Xanh ✓ = OK, vàng • = quét lại <1p, đỏ ✖ = trùng.
     LABELS = {
-        "ok": "✔ Đã thêm", "ignored": "• Quét lại (<1p)", "dup": "✖ TRÙNG",
-        "err": "! Lỗi", "net": "⇄ Chờ gửi",
+        "ok": "✔", "ignored": "•", "dup": "✖",
+        "err": "!", "net": "⇄",
     }
     BG = "#0f172a"
     PANEL = "#1e293b"
@@ -985,7 +986,7 @@ class AgentWindow:
             font=("Segoe UI", 9, "bold"), padx=12, pady=6)
         self.btn_tab_baskets.pack(side="left", padx=(0, 4))
         self.btn_tab_sessions = tk.Button(
-            tabbar, text="📤 Mã phiên OPS",
+            tabbar, text="📤 Phiên OPS",
             command=lambda: self._switch_tab("sessions"),
             bg="#1e293b", fg="#94a3b8", relief="flat",
             font=("Segoe UI", 9), padx=12, pady=6)
@@ -1658,7 +1659,7 @@ class AgentWindow:
         code, result = ev["code"], ev["result"]
         # Bỏ giờ để hiển thị gọn — chỉ icon + mã.
         label = self.LABELS.get(result, result)
-        self.listbox.insert(0, f"{label:12s} {code}")
+        self.listbox.insert(0, f"{label}  {code}")
         self.listbox.itemconfig(0, fg=self.COLORS.get(result, "#e2e8f0"))
         if self.listbox.size() > 300:
             self.listbox.delete(300, "end")
