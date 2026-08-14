@@ -991,6 +991,10 @@ class AgentWindow:
             bg="#1e293b", fg="#94a3b8", relief="flat",
             font=("Segoe UI", 9), padx=12, pady=6)
         self.btn_tab_sessions.pack(side="left")
+        # Nút refresh nhỏ ở góc phải (làm mới sess/basket ngay không cần đợi 5s).
+        tk.Button(tabbar, text="🔄", command=self.refresh_summary_now,
+                  bg="#1e293b", fg="#94a3b8", relief="flat", cursor="hand2",
+                  font=("Segoe UI", 10), padx=6, pady=6).pack(side="right")
 
         # 2 frame content, chỉ 1 cái hiện tại 1 thời điểm.
         self.baskets_tab = tk.Frame(far_right, bg=self.PANEL)
@@ -1461,6 +1465,10 @@ class AgentWindow:
                     f"{_now_vn('%H:%M:%S')}  ✅ Chốt {name}  Total {total} — {detail}"))
                 self.root.after(0, lambda: self.listbox.itemconfig(0, fg="#22c55e"))
                 self.root.after(0, self._pull_all)  # cập nhật danh sách sọt ngay
+                # _force_auto_import_all chạy nền phía server 10-60s/carrier.
+                # Poll thêm 5 lần cách 10s để chắc chắn bắt được session_id mới.
+                for delay in (10, 20, 30, 45, 60):
+                    self.root.after(delay * 1000, self._pull_all)
             finally:
                 self._closing_in_progress = False
         threading.Thread(target=do, daemon=True).start()
