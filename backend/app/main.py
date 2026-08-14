@@ -1160,23 +1160,35 @@ def current_basket_stats(
     db: Session = Depends(get_db)
 ):
     """Lấy thống kê tạm thời của sọt HIỆN TẠI đang quét (chưa chốt)."""
-    now = datetime.now(timezone.utc)
     frm, _ = period_range("day")
-    last_basket = db.scalar(
-        select(Basket).where(Basket.source_agent == agent_name)
-        .where(Basket.closed_at >= frm)
-        .order_by(Basket.seq.desc()).limit(1)
+    # Sọt "hiện tại" = sọt cuối cùng của agent hôm nay CHƯA CHỐT (is_closed=False).
+    # Nếu tất cả đã chốt -> sọt kế tiếp = seq_cuối + 1 (rỗng, chưa có mã).
+    last_open = db.scalar(
+        select(Basket).where(
+            Basket.source_agent == agent_name,
+            Basket.closed_at >= frm,
+            Basket.is_closed == False,  # noqa: E712
+        ).order_by(Basket.seq.desc()).limit(1)
     )
-    started_at = last_basket.closed_at if last_basket else frm
-    next_seq = (last_basket.seq + 1) if last_basket else 1
-
-    rows = db.execute(
-        select(Scan.carrier, func.count())
-        .where(Scan.source_agent == agent_name,
-               Scan.scanned_at > started_at, Scan.scanned_at <= now)
-        .group_by(Scan.carrier)
-    ).all()
-    by_carrier = {c: int(n) for c, n in rows}
+    if last_open:
+        # Đếm theo basket_id — chính xác 100%, không lệ thuộc time range.
+        rows = db.execute(
+            select(Scan.carrier, func.count())
+            .where(Scan.basket_id == last_open.id)
+            .group_by(Scan.carrier)
+        ).all()
+        by_carrier = {c: int(n) for c, n in rows}
+        next_seq = last_open.seq
+    else:
+        last_closed = db.scalar(
+            select(Basket).where(
+                Basket.source_agent == agent_name,
+                Basket.closed_at >= frm,
+                Basket.is_closed == True,  # noqa: E712
+            ).order_by(Basket.seq.desc()).limit(1)
+        )
+        next_seq = (last_closed.seq + 1) if last_closed else 1
+        by_carrier = {}
     total = sum(by_carrier.values())
     
     # Lấy luôn danh sách carrier config để agent dễ render

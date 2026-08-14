@@ -1655,9 +1655,9 @@ class AgentWindow:
 
     def _add_row(self, ev):
         code, result = ev["code"], ev["result"]
-        t = _now_vn("%H:%M:%S")
+        # Bỏ giờ để hiển thị gọn — chỉ icon + mã.
         label = self.LABELS.get(result, result)
-        self.listbox.insert(0, f"{t}  {label:14s} {code}")
+        self.listbox.insert(0, f"{label:12s} {code}")
         self.listbox.itemconfig(0, fg=self.COLORS.get(result, "#e2e8f0"))
         if self.listbox.size() > 300:
             self.listbox.delete(300, "end")
