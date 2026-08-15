@@ -101,7 +101,10 @@ def scan_import(carrier: str, codes: list[str], template_id: int, partner_name: 
                 if "auth.vnfai.com" in current_url or "openid-connect/auth" in current_url:
                     print(f"[scan-import] Session Keycloak het han, dang login lai...")
                     try:
-                        _login(page)
+                        # Page dang o auth.vnfai.com -> submit form NGAY (khong
+                        # goto lai OPS_URL vi se lai bi Keycloak redirect ve day
+                        # voi state khac -> loop redirect).
+                        _submit_keycloak_form(page)
                         page.goto(f"{config.OPS_URL}/#/tpl-sessions/new/{template_id}",
                                   wait_until="networkidle", timeout=30000)
                         page.wait_for_timeout(2000)
@@ -521,63 +524,52 @@ def _save_screenshot(page, tag: str) -> str:
         return ""
 
 
+def _submit_keycloak_form(page):
+    """Điền form Keycloak trên page HIỆN TẠI (không goto lại).
+
+    Dùng khi page đã ở auth.vnfai.com (do redirect từ session expired
+    hoặc từ _login goto). Chỉ tìm form + submit. Raise nếu không thấy form.
+    """
+    user_input = _find_first(page, [
+        "input#username", "input[name='username']", "input[id='username']",
+    ])
+    pass_input = _find_first(page, [
+        "input#password", "input[name='password']", "input[type='password']",
+    ])
+    if not (user_input and pass_input):
+        raise RuntimeError(f"Khong tim form Keycloak. URL: {page.url}")
+    user_input.fill(config.OPS_USER)
+    pass_input.fill(config.OPS_PASS)
+    page.wait_for_timeout(300)
+    _click_first(page, [
+        "input#kc-login", "input[name='login']", "input[type='submit']",
+        "button[type='submit']", "button:has-text('Log In')",
+        "button:has-text('Đăng nhập')",
+    ])
+    page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(3000)
+
+
 def _login(page):
     """Login vào OPS qua Keycloak SSO (auth.vnfai.com).
 
-    OPS dùng Keycloak: khi chưa login, truy cập OPS sẽ redirect sang
-    https://auth.vnfai.com/auth/realms/{tenant}/protocol/openid-connect/auth?...
-    Form login Keycloak: input#username, input#password, input#kc-login (submit).
+    Goto OPS_URL -> nếu bị redirect sang Keycloak thì submit form. Nếu đã
+    login sẵn (cookie còn) thì return sớm.
     """
     page.goto(f"{config.OPS_URL}/", wait_until="networkidle")
     page.wait_for_timeout(2000)
 
     current_url = page.url
-    # Nếu URL vẫn trên OPS domain (có hash routing) → đã login.
     if config.OPS_URL.split("//")[1].split("/")[0] in current_url and "auth" not in current_url:
-        # Kiểm tra thêm: nếu trang đã render được app (có sidebar/menu) → OK.
         try:
             body = page.inner_text("body")
             if "Log In" not in body and "log in" not in body.lower():
-                return  # Đã login thành công, session cookie còn hiệu lực.
+                return
         except Exception:
             return
 
-    # Keycloak redirect: URL chuyển sang auth.vnfai.com hoặc tương tự.
-    # Đợi form login Keycloak xuất hiện.
     page.wait_for_timeout(1500)
-
-    # Tìm form login Keycloak (input#username hoặc input[name='username']).
-    user_input = _find_first(page, [
-        "input#username",
-        "input[name='username']",
-        "input[id='username']",
-    ])
-    pass_input = _find_first(page, [
-        "input#password",
-        "input[name='password']",
-        "input[type='password']",
-    ])
-
-    if user_input and pass_input:
-        user_input.fill(config.OPS_USER)
-        pass_input.fill(config.OPS_PASS)
-        page.wait_for_timeout(300)
-        # Nút submit Keycloak: input#kc-login (type=submit, KHÔNG phải <button>).
-        _click_first(page, [
-            "input#kc-login",
-            "input[name='login']",
-            "input[type='submit']",
-            "button[type='submit']",
-            "button:has-text('Log In')",
-            "button:has-text('Đăng nhập')",
-        ])
-        # Chờ redirect về OPS sau login thành công.
-        page.wait_for_load_state("networkidle")
-        page.wait_for_timeout(3000)
-    else:
-        raise RuntimeError(
-            f"Không tìm thấy form login Keycloak. URL hiện tại: {page.url}"
-        )
+    _submit_keycloak_form(page)
 
 
 def _find_first(page, selectors):
