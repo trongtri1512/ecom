@@ -563,103 +563,115 @@ def _try_auto_import():
 
 
 def _force_auto_import_all():
-    """Chạy nền: Khi bấm 'Hoàn thành sọt', tự động đẩy TOÀN BỘ đơn chờ lên OPS tuần tự."""
+    """Chạy nền: Khi bấm 'Hoàn thành sọt', tự động đẩy TOÀN BỘ đơn chờ lên OPS tuần tự.
+
+    Order: carrier NHIỀU mã trước (tránh session Keycloak het han khi den luot
+    SPX/J&T lo).
+    Batch: chia lon (>MAX_BATCH_PER_SESSION ma) thanh nhieu phien nho de moi
+    phien Playwright chay < 5 phut (duoi timeout Keycloak).
+    """
     from . import ops_uploader
     if not (config.OPS_USER and config.OPS_PASS):
         return
+    MAX_BATCH_PER_SESSION = 200  # 200 ma ~ 3-5 phut, an toan voi Keycloak
     db = SessionLocal()
     try:
-        # Lấy danh sách các ĐVVC có mã chưa import (không bắt buộc trạng thái picked)
-        stmt = select(Scan.carrier).where(Scan.session_id == "").group_by(Scan.carrier)
-        carriers = db.scalars(stmt).all()
-        
+        # Lấy danh sách carrier + COUNT, sort DESC để carrier lon (SPX, J&T) chay TRUOC.
+        rows = db.execute(
+            select(Scan.carrier, func.count().label("cnt"))
+            .where(Scan.session_id == "")
+            .group_by(Scan.carrier)
+            .order_by(func.count().desc())
+        ).all()
+        carriers = [r[0] for r in rows]
+        print(f"[force-import] Thu tu carrier (nhieu ma truoc): {[(r[0], r[1]) for r in rows]}")
+
         for carrier in carriers:
             cfg = _get_ops_config_for_carrier(db, carrier)
             if not cfg:
                 print(f"[force-import] Bỏ qua {carrier} vì chưa cấu hình đối tác OPS")
                 continue
-                
+
             template_id = cfg["template_id"]
             partner = cfg["partner"]
-            
+
             scans = db.scalars(select(Scan).where(Scan.carrier == carrier, Scan.session_id == "").order_by(Scan.scanned_at.asc())).all()
             if not scans:
                 continue
-                
-            codes = [s.code for s in scans]
-            stamp = _build_ops_note(carrier)
-            print(f"[force-import] {carrier}: Bắt đầu nhập {len(codes)} đơn")
-            
-            result = ops_uploader.scan_import(carrier, codes, template_id, partner, stamp)
-            if result.get("ok"):
-                session_id = result.get("ops_session_id") or stamp
-                failed_codes = result.get("failed_codes", [])
-                failed_details = result.get("failed_details", [])
-                successful_codes = [c for c in codes if c not in failed_codes]
-                entered = len(successful_codes)
 
-                # Track basket_id nào có mã thành công để update ops_sessions_json
-                # + ops_status của basket đó (tránh UI hiển thị "Chưa bàn giao"
-                # dù server đã đẩy xong).
-                affected_basket_ids: set = set()
-                for r in scans:
-                    if r.code in successful_codes:
-                        r.session_id = session_id
-                        if r.basket_id:
-                            affected_basket_ids.add(r.basket_id)
+            # Chia thanh cac batch nho de tranh 1 phien qua lau -> session het han.
+            all_scans = list(scans)
+            total_batches = (len(all_scans) + MAX_BATCH_PER_SESSION - 1) // MAX_BATCH_PER_SESSION
+            for batch_idx in range(total_batches):
+                batch_scans = all_scans[batch_idx * MAX_BATCH_PER_SESSION : (batch_idx + 1) * MAX_BATCH_PER_SESSION]
+                codes = [s.code for s in batch_scans]
+                stamp = _build_ops_note(carrier)
+                print(f"[force-import] {carrier} batch {batch_idx+1}/{total_batches}: Bắt đầu nhập {len(codes)} đơn")
+                scans = batch_scans  # Giu bien scans cho code phia duoi (khong dung all_scans).
 
-                # KHÔNG xóa mã lỗi khỏi DB (giữ debug + hiển thị đúng total).
-                # for r in scans: if r.code in failed_codes -> giữ nguyên.
+                result = ops_uploader.scan_import(carrier, codes, template_id, partner, stamp)
+                if result.get("ok"):
+                    session_id = result.get("ops_session_id") or stamp
+                    failed_codes = result.get("failed_codes", [])
+                    failed_details = result.get("failed_details", [])
+                    successful_codes = [c for c in codes if c not in failed_codes]
+                    entered = len(successful_codes)
 
-                # Update từng basket bị ảnh hưởng: thêm carrier -> session_id vào
-                # ops_sessions_json; tính lại ops_status (done/partial); đưa lỗi
-                # vào ops_errors_json (nếu có).
-                import json as _json_fi
-                from datetime import datetime as _dt, timezone as _tz
-                now = _dt.now(_tz.utc)
-                for bid in affected_basket_ids:
-                    basket = db.scalar(select(Basket).where(Basket.id == bid))
-                    if not basket:
-                        continue
-                    # ops_sessions: gộp session mới
-                    try:
-                        sess = _json_fi.loads(basket.ops_sessions_json or "{}")
-                    except Exception:
-                        sess = {}
-                    sess[carrier] = session_id
-                    basket.ops_sessions_json = _json_fi.dumps(sess, ensure_ascii=False)
-                    # ops_errors: append lỗi của carrier này
-                    if failed_details:
+                    # Track basket_id nào có mã thành công.
+                    affected_basket_ids: set = set()
+                    for r in scans:
+                        if r.code in successful_codes:
+                            r.session_id = session_id
+                            if r.basket_id:
+                                affected_basket_ids.add(r.basket_id)
+
+                    import json as _json_fi
+                    from datetime import datetime as _dt, timezone as _tz
+                    now = _dt.now(_tz.utc)
+                    for bid in affected_basket_ids:
+                        basket = db.scalar(select(Basket).where(Basket.id == bid))
+                        if not basket:
+                            continue
                         try:
-                            errs = _json_fi.loads(basket.ops_errors_json or "[]")
+                            sess = _json_fi.loads(basket.ops_sessions_json or "{}")
                         except Exception:
-                            errs = []
-                        for fd in failed_details:
-                            errs.append({"code": fd.get("code", "-"), "carrier": carrier,
-                                          "reason": fd.get("reason", "OPS loại")})
-                        basket.ops_errors_json = _json_fi.dumps(errs, ensure_ascii=False)[:8000]
-                    # ops_status: tính lại dựa vào tổng số session vs số DVVC có mã trong sọt
-                    scans_in_basket = db.scalars(select(Scan).where(Scan.basket_id == bid)).all()
-                    carriers_in_basket = {s.carrier for s in scans_in_basket}
-                    covered = set(sess.keys()) & carriers_in_basket
-                    remaining = carriers_in_basket - covered
-                    total_errors = len(_json_fi.loads(basket.ops_errors_json or "[]"))
-                    if not remaining:
-                        basket.ops_status = "partial" if total_errors > 0 else "done"
-                    else:
-                        # Còn DVVC chưa đẩy -> vẫn coi là chưa hoàn thành (giữ trạng thái cũ trừ khi hiện có gì).
-                        basket.ops_status = basket.ops_status or ""
-                    basket.ops_handed_at = now
-                db.commit()
+                            sess = {}
+                        sess[carrier] = session_id
+                        basket.ops_sessions_json = _json_fi.dumps(sess, ensure_ascii=False)
+                        if failed_details:
+                            try:
+                                errs = _json_fi.loads(basket.ops_errors_json or "[]")
+                            except Exception:
+                                errs = []
+                            for fd in failed_details:
+                                errs.append({"code": fd.get("code", "-"), "carrier": carrier,
+                                              "reason": fd.get("reason", "OPS loại")})
+                            basket.ops_errors_json = _json_fi.dumps(errs, ensure_ascii=False)[:8000]
+                        scans_in_basket = db.scalars(select(Scan).where(Scan.basket_id == bid)).all()
+                        carriers_in_basket = {s.carrier for s in scans_in_basket}
+                        covered = set(sess.keys()) & carriers_in_basket
+                        remaining = carriers_in_basket - covered
+                        total_errors = len(_json_fi.loads(basket.ops_errors_json or "[]"))
+                        if not remaining:
+                            basket.ops_status = "partial" if total_errors > 0 else "done"
+                        else:
+                            basket.ops_status = basket.ops_status or ""
+                        basket.ops_handed_at = now
+                    db.commit()
 
-                _log_ops(db, "success", "force_import", carrier, entered,
-                         session_id, f"Hoàn thành sọt: Đẩy tuần tự {entered} mã.", "")
-                events.publish("auto_import", {"carrier": carrier, "count": entered, "session_id": session_id})
-            else:
-                err = result.get("error", "")
-                shot = result.get("screenshot_file", "")
-                _log_ops(db, "error", "force_import", carrier, len(codes), "", err, shot)
-                events.publish("auto_import_error", {"carrier": carrier, "error": err})
+                    _log_ops(db, "success", "force_import", carrier, entered,
+                             session_id,
+                             f"Hoàn thành sọt: Batch {batch_idx+1}/{total_batches}, đẩy {entered} mã.", "")
+                    events.publish("auto_import", {"carrier": carrier, "count": entered, "session_id": session_id})
+                else:
+                    err = result.get("error", "")
+                    shot = result.get("screenshot_file", "")
+                    _log_ops(db, "error", "force_import", carrier, len(codes), "", err, shot)
+                    events.publish("auto_import_error", {"carrier": carrier, "error": err})
+                    # Batch fail -> BỎ CÁC BATCH SAU của cùng carrier (session đang lỗi,
+                    # thử tiếp cũng fail). User có thể re-run sau bằng nút 🔁 trên Admin.
+                    print(f"[force-import] {carrier} batch {batch_idx+1} fail, skip cac batch sau cua carrier nay.")
+                    break
     finally:
         db.close()
 
