@@ -1368,11 +1368,11 @@ class AgentWindow:
         dlg.configure(bg=self.PANEL)
         dlg.transient(self.root)
         dlg.grab_set()
-        dlg.geometry("500x420")
-        dlg.resizable(False, False)
+        dlg.geometry("560x620")
+        dlg.resizable(False, True)
         dlg.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 250
-        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 210
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 280
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 310
         dlg.geometry(f"+{max(x, 20)}+{max(y, 20)}")
 
         tk.Label(dlg, text="⚙ Cài đặt nguồn quét mã",
@@ -1401,16 +1401,165 @@ class AgentWindow:
                                    fg="#e2e8f0", bg=self.PANEL,
                                    font=("Segoe UI", 10, "bold"), bd=1, relief="solid")
         cam_frame.pack(fill="x", padx=16, pady=(0, 10))
-        tk.Label(cam_frame, text="Nguồn:", fg="#94a3b8", bg=self.PANEL,
-                 font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(6, 0))
-        cam_src_var = tk.StringVar(value=str(self.cfg.get("camera_source", "0")))
-        entry = tk.Entry(cam_frame, textvariable=cam_src_var, bg=self.BG, fg="#e2e8f0",
-                         relief="flat", font=("Consolas", 10), insertbackground="#e2e8f0")
-        entry.pack(fill="x", padx=10, pady=(2, 4))
-        tk.Label(cam_frame,
-                 text="VD:  0 (webcam) · Hikvision 4MP: rtsp://admin:PASS@192.168.1.64:554/Streaming/Channels/102 (sub 1280×720)",
+
+        # Loại camera: webcam local | Hikvision RTSP | URL tuỳ chỉnh
+        cam_type_var = tk.StringVar(value="webcam")
+        current_src = str(self.cfg.get("camera_source", "0"))
+        if current_src.startswith("rtsp://") and "Streaming/Channels" in current_src:
+            cam_type_var.set("hikvision")
+        elif current_src.startswith(("rtsp://", "http://")):
+            cam_type_var.set("custom")
+
+        type_row = tk.Frame(cam_frame, bg=self.PANEL)
+        type_row.pack(fill="x", padx=10, pady=(6, 4))
+        tk.Label(type_row, text="Loại:", fg="#94a3b8", bg=self.PANEL,
+                 font=("Segoe UI", 9)).pack(side="left")
+        for val, label in [("webcam", "💻 Webcam"), ("hikvision", "📹 Hikvision IP"),
+                           ("custom", "🔗 URL khác")]:
+            tk.Radiobutton(type_row, text=label, variable=cam_type_var, value=val,
+                           fg="#e2e8f0", bg=self.PANEL, selectcolor=self.BG,
+                           font=("Segoe UI", 9), activebackground=self.PANEL,
+                           activeforeground="#e2e8f0",
+                           command=lambda: _switch_form()
+                           ).pack(side="left", padx=(8, 0))
+
+        # Container cho từng form (webcam / hikvision / custom)
+        forms_wrap = tk.Frame(cam_frame, bg=self.PANEL)
+        forms_wrap.pack(fill="x", padx=10, pady=(0, 4))
+
+        # Form 1: Webcam
+        webcam_form = tk.Frame(forms_wrap, bg=self.PANEL)
+        webcam_idx_var = tk.IntVar(value=int(current_src) if current_src.isdigit() else 0)
+        tk.Label(webcam_form, text="Index device:", fg="#94a3b8", bg=self.PANEL,
+                 font=("Segoe UI", 9)).pack(side="left")
+        tk.Spinbox(webcam_form, from_=0, to=9, textvariable=webcam_idx_var,
+                   width=5, bg=self.BG, fg="#e2e8f0", relief="flat",
+                   font=("Segoe UI", 10)).pack(side="left", padx=(6, 0))
+        tk.Label(webcam_form, text="  (0 = camera mặc định, 1 = camera thứ 2...)",
+                 fg="#64748b", bg=self.PANEL, font=("Segoe UI", 8)).pack(side="left")
+
+        # Form 2: Hikvision RTSP (4 field)
+        hik_form = tk.Frame(forms_wrap, bg=self.PANEL)
+        # Parse existing URL nếu có
+        hik_ip_var = tk.StringVar(value="192.168.1.64")
+        hik_user_var = tk.StringVar(value="admin")
+        hik_pass_var = tk.StringVar(value="")
+        hik_channel_var = tk.StringVar(value="101")  # 2MP main = 101 (1080p)
+        if current_src.startswith("rtsp://") and "Streaming/Channels" in current_src:
+            import re
+            m = re.match(r"rtsp://([^:]+):([^@]+)@([^:/]+)(?::\d+)?/Streaming/Channels/(\d+)", current_src)
+            if m:
+                hik_user_var.set(m.group(1))
+                # URL decode password (VD %40 -> @)
+                import urllib.parse
+                hik_pass_var.set(urllib.parse.unquote(m.group(2)))
+                hik_ip_var.set(m.group(3))
+                hik_channel_var.set(m.group(4))
+
+        for label, var, show in [
+            ("IP camera:", hik_ip_var, None),
+            ("Username:", hik_user_var, None),
+            ("Password:", hik_pass_var, "*"),
+        ]:
+            row = tk.Frame(hik_form, bg=self.PANEL)
+            row.pack(fill="x", pady=1)
+            tk.Label(row, text=label, fg="#94a3b8", bg=self.PANEL,
+                     font=("Segoe UI", 9), width=11, anchor="w").pack(side="left")
+            e = tk.Entry(row, textvariable=var, bg=self.BG, fg="#e2e8f0",
+                         relief="flat", font=("Consolas", 10),
+                         insertbackground="#e2e8f0", show=show or "")
+            e.pack(side="left", fill="x", expand=True)
+        # Channel dropdown
+        row = tk.Frame(hik_form, bg=self.PANEL)
+        row.pack(fill="x", pady=1)
+        tk.Label(row, text="Stream:", fg="#94a3b8", bg=self.PANEL,
+                 font=("Segoe UI", 9), width=11, anchor="w").pack(side="left")
+        stream_opts = ["101 (Main 1080p - 2MP)", "102 (Sub 640p)", "103 (Third 480p)"]
+        # Chọn option theo channel hiện tại
+        default_opt = stream_opts[0]
+        for opt in stream_opts:
+            if opt.startswith(hik_channel_var.get()):
+                default_opt = opt
+                break
+        stream_display_var = tk.StringVar(value=default_opt)
+        stream_menu = tk.OptionMenu(row, stream_display_var, *stream_opts)
+        stream_menu.config(bg=self.BG, fg="#e2e8f0", relief="flat",
+                            font=("Segoe UI", 9), highlightthickness=0)
+        stream_menu["menu"].config(bg=self.BG, fg="#e2e8f0")
+        stream_menu.pack(side="left", fill="x", expand=True)
+
+        # Nút Test connection
+        test_row = tk.Frame(hik_form, bg=self.PANEL)
+        test_row.pack(fill="x", pady=(4, 0))
+        test_status_lbl = tk.Label(test_row, text="", fg="#94a3b8", bg=self.PANEL,
+                                    font=("Segoe UI", 8, "italic"))
+        test_status_lbl.pack(side="right", padx=(6, 0))
+
+        def _build_hik_url():
+            import urllib.parse
+            ip = hik_ip_var.get().strip()
+            user = hik_user_var.get().strip()
+            pwd = urllib.parse.quote(hik_pass_var.get(), safe="")
+            channel = stream_display_var.get().split(" ")[0]
+            return f"rtsp://{user}:{pwd}@{ip}:554/Streaming/Channels/{channel}"
+
+        def _test_connection():
+            url = _build_hik_url()
+            test_status_lbl.config(text="⏳ Đang test...", fg="#fbbf24")
+            def do_test():
+                try:
+                    import cv2 as _cv2
+                    cap = _cv2.VideoCapture(url)
+                    ok = cap.isOpened()
+                    if ok:
+                        ret, frame = cap.read()
+                        ok = ret and frame is not None
+                    cap.release()
+                    if ok:
+                        self.root.after(0, lambda: test_status_lbl.config(
+                            text="✓ Kết nối OK", fg="#4ade80"))
+                    else:
+                        self.root.after(0, lambda: test_status_lbl.config(
+                            text="✖ Không kết nối được", fg="#ef4444"))
+                except ImportError:
+                    self.root.after(0, lambda: test_status_lbl.config(
+                        text="✖ opencv-python chưa cài", fg="#ef4444"))
+                except Exception as ex:
+                    msg = str(ex)[:40]
+                    self.root.after(0, lambda: test_status_lbl.config(
+                        text=f"✖ {msg}", fg="#ef4444"))
+            threading.Thread(target=do_test, daemon=True).start()
+
+        tk.Button(test_row, text="🔍 Test kết nối", command=_test_connection,
+                  bg="#334155", fg="#e2e8f0", relief="flat",
+                  font=("Segoe UI", 9), padx=10, pady=3).pack(side="left")
+
+        # Form 3: URL tuỳ chỉnh
+        custom_form = tk.Frame(forms_wrap, bg=self.PANEL)
+        custom_url_var = tk.StringVar(value=current_src if cam_type_var.get() == "custom" else "")
+        tk.Label(custom_form, text="URL:", fg="#94a3b8", bg=self.PANEL,
+                 font=("Segoe UI", 9)).pack(anchor="w")
+        tk.Entry(custom_form, textvariable=custom_url_var, bg=self.BG, fg="#e2e8f0",
+                 relief="flat", font=("Consolas", 9), insertbackground="#e2e8f0"
+                 ).pack(fill="x")
+        tk.Label(custom_form,
+                 text="VD: rtsp://... hoặc http://192.168.1.100:8080/video (IP Webcam app điện thoại)",
                  fg="#64748b", bg=self.PANEL, font=("Segoe UI", 8), wraplength=440,
-                 justify="left").pack(anchor="w", padx=10, pady=(0, 6))
+                 justify="left").pack(anchor="w", pady=(2, 0))
+
+        def _switch_form():
+            webcam_form.pack_forget()
+            hik_form.pack_forget()
+            custom_form.pack_forget()
+            t = cam_type_var.get()
+            if t == "webcam":
+                webcam_form.pack(fill="x", pady=2)
+            elif t == "hikvision":
+                hik_form.pack(fill="x", pady=2)
+            else:
+                custom_form.pack(fill="x", pady=2)
+
+        _switch_form()  # init view
 
         # --- Reading zone: 4 slider tuỳ chỉnh x/y/w/h ---
         tk.Label(cam_frame, text="Reading zone (kẻ ô vị trí quét, % của frame):",
@@ -1447,7 +1596,14 @@ class AgentWindow:
         def save_and_apply():
             try:
                 new_src = src_var.get()
-                new_cam = cam_src_var.get().strip() or "0"
+                # Build camera source từ form đang active.
+                t = cam_type_var.get()
+                if t == "webcam":
+                    new_cam = str(webcam_idx_var.get())
+                elif t == "hikvision":
+                    new_cam = _build_hik_url()
+                else:
+                    new_cam = custom_url_var.get().strip() or "0"
                 updates = {
                     "input_source": new_src,
                     "camera_source": new_cam,
