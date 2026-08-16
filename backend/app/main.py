@@ -130,6 +130,25 @@ def apply_period(stmt, period: str | None):
     return stmt
 
 
+def _normalize_code(code: str) -> str:
+    """Chuẩn hoá mã vận đơn để tránh dup do máy quét lỗi.
+
+    Ví dụ SPX: mã chuẩn 'SPXVN064276259448' (17 chars). Máy quét đôi khi
+    drop ký tự đầu -> 'PXVN064276259448' (16 chars). Detect prefix
+    PXVN + 12 số -> tự thêm 'S' vào đầu.
+
+    Chỉ áp dụng khi ĐÚNG format (16 chars: PXVN + 12 digit), tránh false
+    positive.
+    """
+    if not code:
+        return code
+    code = code.strip().upper()
+    # Case SPX bị mất chữ S đầu.
+    if len(code) == 16 and code.startswith("PXVN") and code[4:].isdigit():
+        return "S" + code
+    return code
+
+
 # ----------------------------- Ghi mã (agent) -----------------------------
 @app.post("/api/scans", status_code=201)
 def create_scan(
@@ -141,6 +160,10 @@ def create_scan(
     code = payload.code.strip()
     if not code:
         raise HTTPException(status_code=400, detail="Mã rỗng")
+    # Normalize mã bị máy quét cắt ký tự đầu:
+    # - "PXVN..." (16 chars) -> "SPXVN..." (17 chars, mã SPX chuẩn).
+    #   Máy quét đôi khi drop ký tự đầu do quét nhanh / khoảng cách xa.
+    code = _normalize_code(code)
 
     carrier = detect_carrier(code, db)
 
