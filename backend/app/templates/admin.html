@@ -362,10 +362,26 @@
     <!-- ================ TAB: BASKETS ================ -->
     <section class="tabpane" data-pane="baskets">
       <div class="card">
-        <div class="card-head">
-          <h3>Các sọt hôm nay</h3>
-          <div class="flex-row">
-            <button id="btnBackfillBaskets" class="btn btn-ghost" title="Gán basket_id cho các sọt cũ (tạo trước khi có migration). Chỉ cần chạy 1 lần.">🔧 Gán lại basket_id (sọt cũ)</button>
+        <div class="card-head" style="flex-wrap:wrap;gap:8px;">
+          <h3 style="margin:0;">Các sọt <span id="basketPeriodLabel" style="color:var(--muted);font-weight:400;">hôm nay</span></h3>
+          <div class="flex-row" style="flex-wrap:wrap;gap:6px;align-items:center;">
+            <select id="basketPeriodSelect" class="input" style="padding:4px 8px;font-size:13px;">
+              <option value="day" selected>Hôm nay</option>
+              <option value="yesterday">Hôm qua</option>
+              <option value="week">Tuần này</option>
+              <option value="last_week">Tuần trước</option>
+              <option value="month">Tháng này</option>
+              <option value="last_month">Tháng trước</option>
+              <option value="all">Tất cả</option>
+              <option value="custom">Từ ngày...</option>
+            </select>
+            <span id="basketCustomRange" style="display:none;gap:4px;align-items:center;">
+              <input type="date" id="basketFromDate" class="input" style="padding:4px 6px;font-size:13px;">
+              <span style="color:var(--muted);">→</span>
+              <input type="date" id="basketToDate" class="input" style="padding:4px 6px;font-size:13px;">
+              <button id="btnApplyBasketRange" class="btn btn-primary" style="padding:4px 10px;font-size:12px;">Áp dụng</button>
+            </span>
+            <button id="btnBackfillBaskets" class="btn btn-ghost" title="Gán basket_id cho các sọt cũ (tạo trước khi có migration). Chỉ cần chạy 1 lần.">🔧 Gán basket_id</button>
             <button id="btnRefreshBaskets" class="btn btn-ghost">↻ Làm mới</button>
           </div>
         </div>
@@ -747,9 +763,30 @@
   /* ================ BASKETS ================ */
   // Cache basket data để mở modal xem lỗi không cần fetch lại.
   let basketsCache = [];
+  function _buildBasketQuery() {
+    const sel = document.getElementById("basketPeriodSelect");
+    const period = sel ? sel.value : "day";
+    if (period === "custom") {
+      const f = document.getElementById("basketFromDate").value;
+      const t = document.getElementById("basketToDate").value;
+      const parts = [];
+      if (f) parts.push(`from_date=${f}`);
+      if (t) parts.push(`to_date=${t}`);
+      return parts.length ? parts.join("&") : "period=day";
+    }
+    return `period=${period}`;
+  }
+  function _updateBasketLabel() {
+    const sel = document.getElementById("basketPeriodSelect");
+    const map = {day:"hôm nay", yesterday:"hôm qua", week:"tuần này", last_week:"tuần trước",
+                 month:"tháng này", last_month:"tháng trước", all:"tất cả", custom:"tuỳ chỉnh"};
+    const label = document.getElementById("basketPeriodLabel");
+    if (label && sel) label.textContent = map[sel.value] || "hôm nay";
+  }
   async function loadBaskets() {
+    _updateBasketLabel();
     try {
-      const data = await api("/api/baskets?period=day");
+      const data = await api(`/api/baskets?${_buildBasketQuery()}`);
       const items = data.items || [];
       basketsCache = items;
       $("#basketEmpty").hidden = items.length > 0;
@@ -820,6 +857,12 @@
     }
   }
   $("#btnRefreshBaskets").addEventListener("click", loadBaskets);
+  $("#basketPeriodSelect").addEventListener("change", (e) => {
+    const isCustom = e.target.value === "custom";
+    document.getElementById("basketCustomRange").style.display = isCustom ? "inline-flex" : "none";
+    if (!isCustom) loadBaskets();
+  });
+  $("#btnApplyBasketRange").addEventListener("click", loadBaskets);
   $("#btnBackfillBaskets").addEventListener("click", async () => {
     if (!confirm("Gán basket_id cho tất cả sọt CŨ (tạo trước khi có migration)?\nChỉ cần chạy 1 lần. Không ảnh hưởng dữ liệu đã có.")) return;
     const btn = $("#btnBackfillBaskets");

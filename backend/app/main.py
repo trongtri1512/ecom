@@ -1335,24 +1335,42 @@ def current_basket_stats(
 def list_baskets(
     agent_name: str | None = Query(default=None),
     period: str | None = Query(default="day"),
+    from_date: str | None = Query(default=None, description="YYYY-MM-DD (giờ VN). Ưu tiên hơn period nếu có."),
+    to_date: str | None = Query(default=None, description="YYYY-MM-DD (giờ VN, inclusive). Ưu tiên hơn period nếu có."),
     include_open: bool = Query(default=False, description="True = kèm sọt đang mở"),
     verify: bool = Query(default=False, description="True = kiểm tra count thật từ scans"),
     db: Session = Depends(get_db),
 ):
-    """Danh sách các sọt (lọc theo agent + kỳ).
+    """Danh sách các sọt (lọc theo agent + kỳ hoặc khoảng ngày tuỳ chỉnh).
 
-    Mặc định CHỈ trả sọt đã chốt (is_closed=True). Sọt đang mở (chưa bấm nút
-    Hoàn thành sọt) bị ẩn để tránh nhầm lẫn với "Giờ chốt" trong UI.
-    Truyền include_open=true nếu cần xem cả sọt đang quét (VD trang Admin).
+    Ưu tiên: from_date/to_date > period. Nếu truyền from/to → dùng khoảng đó
+    (bao gồm cả 2 ngày biên). Nếu không → dùng period (day/yesterday/week/...).
     """
     stmt = select(Basket).order_by(Basket.closed_at.desc())
     if agent_name:
         stmt = stmt.where(Basket.source_agent == agent_name)
     if not include_open:
         stmt = stmt.where(Basket.is_closed == True)  # noqa: E712
-    frm, to = period_range(period)
+
+    # Xác định khoảng thời gian: from/to (VN) hoặc period.
+    frm = to = None
+    if from_date or to_date:
+        try:
+            if from_date:
+                d = datetime.strptime(from_date, "%Y-%m-%d")
+                frm = d.replace(tzinfo=_VN_TZ)
+            if to_date:
+                d = datetime.strptime(to_date, "%Y-%m-%d")
+                # to_date inclusive -> tới hết ngày (start of next day).
+                to = (d + timedelta(days=1)).replace(tzinfo=_VN_TZ)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="from_date/to_date phải theo format YYYY-MM-DD")
+    else:
+        frm, to = period_range(period)
     if frm is not None:
-        stmt = stmt.where(Basket.closed_at >= frm, Basket.closed_at <= to)
+        stmt = stmt.where(Basket.closed_at >= frm)
+    if to is not None:
+        stmt = stmt.where(Basket.closed_at <= to)
     rows = db.scalars(stmt).all()
     items = [r.as_dict() for r in rows]
     if verify:
