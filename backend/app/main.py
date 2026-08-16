@@ -593,9 +593,27 @@ def _force_auto_import_all():
     Batch: chia lon (>MAX_BATCH_PER_SESSION ma) thanh nhieu phien nho de moi
     phien Playwright chay < 5 phut (duoi timeout Keycloak).
     """
-    from . import ops_uploader
-    if not (config.OPS_USER and config.OPS_PASS):
+    print(f"[force-import] START trigger from close_basket")
+    # Wrap TOAN BO ham trong try/except de exception khong bi nuot im lang o thread.
+    # Truoc do: neu exception som (VD import fail, config fail), khong co log
+    # nao het -> user tuong auto-import khong duoc goi.
+    _log_db = None
+    try:
+        from . import ops_uploader
+        if not (config.OPS_USER and config.OPS_PASS):
+            print(f"[force-import] ABORT: OPS_USER/OPS_PASS chua cau hinh")
+            # Ghi log de UI Admin thay ly do.
+            try:
+                _log_db = SessionLocal()
+                _log_ops(_log_db, "error", "force_import", "", 0, "",
+                         "OPS_USER/OPS_PASS chua cau hinh trong env backend", "")
+            finally:
+                if _log_db: _log_db.close()
+            return
+    except Exception as e:
+        print(f"[force-import] IMPORT FAIL: {e}")
         return
+
     MAX_BATCH_PER_SESSION = 200  # 200 ma ~ 3-5 phut, an toan voi Keycloak
     db = SessionLocal()
     try:
@@ -695,6 +713,17 @@ def _force_auto_import_all():
                     # thử tiếp cũng fail). User có thể re-run sau bằng nút 🔁 trên Admin.
                     print(f"[force-import] {carrier} batch {batch_idx+1} fail, skip cac batch sau cua carrier nay.")
                     break
+        print(f"[force-import] DONE")
+    except Exception as ex:
+        # Ghi log EXCEPTION de UI Admin thay ly do fail (truoc do bi nuot im lang).
+        import traceback
+        tb = traceback.format_exc()[-1500:]
+        print(f"[force-import] EXCEPTION: {ex}\n{tb}")
+        try:
+            _log_ops(db, "error", "force_import", "", 0, "",
+                     f"EXCEPTION trong _force_auto_import_all: {ex}\n{tb}", "")
+        except Exception:
+            pass
     finally:
         db.close()
 
