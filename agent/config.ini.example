@@ -41,5 +41,12 @@ fps = 15
 ; Reading zone: phần trăm giữa frame để chấp nhận mã (0.6 = 60% giữa).
 ; Mã ngoài zone bị bỏ qua -> user đặt kiện đúng vị trí mới scan.
 zone_ratio = 0.6
+; Reading zone TÙY CHỈNH (percent 0-100): x, y, width, height. Nếu điền
+; đủ 4 giá trị > 0, sẽ override zone_ratio. VD zone_x=20 zone_y=30 zone_w=60
+; zone_h=40 = zone bắt đầu 20% từ trái, 30% từ trên, rộng 60%, cao 40%.
+zone_x = 0
+zone_y = 0
+zone_w = 0
+zone_h = 0
 ; Cùng mã không gửi lại trong bao nhiêu giây (chống spam khi kiện đứng yên).
 dedup_seconds = 3.0

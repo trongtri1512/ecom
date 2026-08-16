@@ -453,6 +453,10 @@ def load_config():
         "camera_height": cfg.getint("camera", "height", fallback=480),
         "camera_fps": cfg.getint("camera", "fps", fallback=15),
         "camera_zone_ratio": cfg.getfloat("camera", "zone_ratio", fallback=0.6),
+        "camera_zone_x": cfg.getint("camera", "zone_x", fallback=0),
+        "camera_zone_y": cfg.getint("camera", "zone_y", fallback=0),
+        "camera_zone_w": cfg.getint("camera", "zone_w", fallback=0),
+        "camera_zone_h": cfg.getint("camera", "zone_h", fallback=0),
         "camera_dedup_seconds": cfg.getfloat("camera", "dedup_seconds", fallback=3.0),
     }
 
@@ -474,6 +478,10 @@ def save_config_partial(updates: dict):
         "camera_height": ("camera", "height"),
         "camera_fps": ("camera", "fps"),
         "camera_zone_ratio": ("camera", "zone_ratio"),
+        "camera_zone_x": ("camera", "zone_x"),
+        "camera_zone_y": ("camera", "zone_y"),
+        "camera_zone_w": ("camera", "zone_w"),
+        "camera_zone_h": ("camera", "zone_h"),
         "camera_dedup_seconds": ("camera", "dedup_seconds"),
     }
     for k, v in updates.items():
@@ -1404,21 +1412,33 @@ class AgentWindow:
                  fg="#64748b", bg=self.PANEL, font=("Segoe UI", 8), wraplength=440,
                  justify="left").pack(anchor="w", padx=10, pady=(0, 6))
 
-        # --- Reading zone ratio ---
-        zone_frame = tk.Frame(cam_frame, bg=self.PANEL)
-        zone_frame.pack(fill="x", padx=10, pady=(0, 6))
-        zone_var = tk.DoubleVar(value=float(self.cfg.get("camera_zone_ratio", 0.6)))
-        tk.Label(zone_frame, text="Reading zone (%):", fg="#94a3b8", bg=self.PANEL,
-                 font=("Segoe UI", 9)).pack(side="left")
-        zone_lbl = tk.Label(zone_frame, text=f"{int(zone_var.get()*100)}%",
-                            fg="#e2e8f0", bg=self.PANEL, font=("Segoe UI", 9, "bold"), width=5)
-        zone_lbl.pack(side="right")
-        zone_scale = tk.Scale(cam_frame, from_=0.3, to=1.0, resolution=0.05,
-                              orient="horizontal", variable=zone_var, showvalue=0,
-                              bg=self.PANEL, fg="#e2e8f0", troughcolor=self.BG,
-                              highlightthickness=0,
-                              command=lambda v: zone_lbl.config(text=f"{int(float(v)*100)}%"))
-        zone_scale.pack(fill="x", padx=10, pady=(0, 6))
+        # --- Reading zone: 4 slider tuỳ chỉnh x/y/w/h ---
+        tk.Label(cam_frame, text="Reading zone (kẻ ô vị trí quét, % của frame):",
+                 fg="#94a3b8", bg=self.PANEL, font=("Segoe UI", 9, "bold")
+                 ).pack(anchor="w", padx=10, pady=(4, 2))
+        zone_vars = {}
+        for key, label, default_getter, max_v in [
+            ("camera_zone_x", "X (từ trái)", lambda: self.cfg.get("camera_zone_x", 0) or 20, 90),
+            ("camera_zone_y", "Y (từ trên)", lambda: self.cfg.get("camera_zone_y", 0) or 20, 90),
+            ("camera_zone_w", "Rộng", lambda: self.cfg.get("camera_zone_w", 0) or 60, 100),
+            ("camera_zone_h", "Cao", lambda: self.cfg.get("camera_zone_h", 0) or 60, 100),
+        ]:
+            row = tk.Frame(cam_frame, bg=self.PANEL)
+            row.pack(fill="x", padx=10, pady=1)
+            var = tk.IntVar(value=int(default_getter()))
+            zone_vars[key] = var
+            tk.Label(row, text=label, fg="#94a3b8", bg=self.PANEL,
+                     font=("Segoe UI", 8), width=12, anchor="w").pack(side="left")
+            val_lbl = tk.Label(row, text=f"{var.get()}%", fg="#e2e8f0", bg=self.PANEL,
+                               font=("Segoe UI", 8, "bold"), width=5)
+            val_lbl.pack(side="right")
+            def _make_cb(lbl):
+                return lambda v: lbl.config(text=f"{int(float(v))}%")
+            tk.Scale(row, from_=0, to=max_v, resolution=1,
+                     orient="horizontal", variable=var, showvalue=0,
+                     bg=self.PANEL, fg="#e2e8f0", troughcolor=self.BG,
+                     highlightthickness=0, length=280,
+                     command=_make_cb(val_lbl)).pack(side="left", fill="x", expand=True, padx=(6, 6))
 
         # --- Buttons ---
         btns = tk.Frame(dlg, bg=self.PANEL)
@@ -1428,12 +1448,15 @@ class AgentWindow:
             try:
                 new_src = src_var.get()
                 new_cam = cam_src_var.get().strip() or "0"
-                new_zone = round(zone_var.get(), 2)
-                save_config_partial({
+                updates = {
                     "input_source": new_src,
                     "camera_source": new_cam,
-                    "camera_zone_ratio": new_zone,
-                })
+                    "camera_zone_x": zone_vars["camera_zone_x"].get(),
+                    "camera_zone_y": zone_vars["camera_zone_y"].get(),
+                    "camera_zone_w": zone_vars["camera_zone_w"].get(),
+                    "camera_zone_h": zone_vars["camera_zone_h"].get(),
+                }
+                save_config_partial(updates)
                 dlg.destroy()
                 # Restart camera + notify
                 restart = self.state.get("restart_camera")
@@ -1938,13 +1961,22 @@ def main():
             print("[camera] Chưa cài opencv-python -> bỏ qua")
             return None
         try:
+            # Zone rect (4 sliders) chỉ apply khi cả 4 > 0 và tổng x+w, y+h <= 100.
+            zx = _cfg.get("camera_zone_x", 0)
+            zy = _cfg.get("camera_zone_y", 0)
+            zw = _cfg.get("camera_zone_w", 0)
+            zh = _cfg.get("camera_zone_h", 0)
+            zone_rect = None
+            if zw > 0 and zh > 0 and (zx + zw) <= 100 and (zy + zh) <= 100:
+                zone_rect = (zx, zy, zw, zh)
             cam = CameraScanner(
                 source=_cfg.get("camera_source", "0"),
                 resolution=(_cfg.get("camera_width", 640), _cfg.get("camera_height", 480)),
                 fps_target=_cfg.get("camera_fps", 15),
                 zone_ratio=_cfg.get("camera_zone_ratio", 0.6),
+                zone_rect=zone_rect,
                 dedup_seconds=_cfg.get("camera_dedup_seconds", 3.0),
-                on_scan=handle_code,  # cùng entry point với máy quét bàn phím
+                on_scan=handle_code,
             )
             if cam.start():
                 print(f"[camera] Đã mở source={_cfg.get('camera_source')}")

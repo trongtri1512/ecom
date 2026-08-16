@@ -33,6 +33,19 @@ try:
 except ImportError:
     HAS_PYZBAR = False
 
+# Preprocess module (optional — nếu có sẽ dùng để tăng detect rate).
+try:
+    from camera_preprocess import preprocess_pipeline, resize_if_large
+    HAS_PREPROCESS = True
+except ImportError:
+    try:
+        from .camera_preprocess import preprocess_pipeline, resize_if_large  # type: ignore
+        HAS_PREPROCESS = True
+    except ImportError:
+        HAS_PREPROCESS = False
+        preprocess_pipeline = lambda f: [f] if f is not None else []
+        resize_if_large = lambda f, **kw: f
+
 
 @dataclass
 class BarcodeResult:
@@ -58,6 +71,7 @@ class CameraScanner:
         resolution: tuple = (640, 480),
         fps_target: int = 15,
         zone_ratio: float = 0.6,
+        zone_rect: Optional[tuple] = None,  # (x%, y%, w%, h%) — nếu có thì override zone_ratio
         dedup_seconds: float = 3.0,
         on_scan: Optional[Callable[[str], None]] = None,
     ):
@@ -66,6 +80,10 @@ class CameraScanner:
           - "0" / "1" / ... (số) -> webcam local index đó
           - "rtsp://..."         -> IP camera RTSP
           - "http://..."         -> HTTP MJPEG stream
+        zone_ratio: reading zone tự căn giữa, chiếm zone_ratio (0.3-1.0).
+        zone_rect: (x%, y%, w%, h%) mỗi giá trị 0-100, VD (20, 30, 60, 40)
+                   = zone bắt đầu ở 20% từ trái, 30% từ trên, rộng 60%, cao 40%.
+                   Nếu None -> dùng zone_ratio.
         on_scan(code: str): callback khi detect mã hợp lệ (đã dedup + in zone).
         """
         if not HAS_CV2:
@@ -74,6 +92,7 @@ class CameraScanner:
         self.resolution = resolution
         self.fps_target = fps_target
         self.zone_ratio = zone_ratio
+        self.zone_rect = zone_rect
         self.dedup_seconds = dedup_seconds
         self.on_scan = on_scan
 
@@ -172,15 +191,13 @@ class CameraScanner:
                 time.sleep(interval - elapsed)
 
     # -------------- Decode logic --------------
-    def _decode_frame(self, frame: "np.ndarray") -> list[BarcodeResult]:
+    def _decode_variant(self, gray_frame) -> list[BarcodeResult]:
+        """Decode 1 variant (đã preprocess sang grayscale)."""
         results: list[BarcodeResult] = []
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-        # 1. Thử OpenCV BarcodeDetector (nhanh)
+        # 1. OpenCV BarcodeDetector (nhanh, C++ backend)
         if self._has_cv_detector:
             try:
-                # detectAndDecode trả (data, decoded_type, points)
-                ret, decoded, types, points = self._cv_detector.detectAndDecodeWithType(gray)
+                ret, decoded, types, points = self._cv_detector.detectAndDecodeWithType(gray_frame)
                 if ret and decoded is not None:
                     for i, code in enumerate(decoded):
                         if not code:
@@ -195,11 +212,10 @@ class CameraScanner:
                         ))
             except Exception:
                 pass
-
-        # 2. Fallback pyzbar nếu OpenCV không thấy gì
+        # 2. Fallback pyzbar
         if not results and HAS_PYZBAR:
             try:
-                decoded = _pyzbar_decode(gray)
+                decoded = _pyzbar_decode(gray_frame)
                 for obj in decoded:
                     code = obj.data.decode("utf-8", errors="ignore")
                     if not code:
@@ -212,8 +228,27 @@ class CameraScanner:
                     ))
             except Exception as e:
                 print(f"[camera] pyzbar error: {e}")
-
         return results
+
+    def _decode_frame(self, frame: "np.ndarray") -> list[BarcodeResult]:
+        """Decode frame — thử tuần tự các variant preprocess, EARLY EXIT khi
+        variant nào ra kết quả (tránh burn CPU decode 5 lần khi variant 1 đã OK).
+
+        Merge dedup theo (data, rect) để không double-count 1 barcode.
+        """
+        # Resize xuống để giảm CPU nếu quá to.
+        frame = resize_if_large(frame, max_width=1280)
+        variants = preprocess_pipeline(frame)
+        merged: dict = {}  # data -> BarcodeResult (giữ result đầu tiên)
+        for _name, gray in variants:
+            found = self._decode_variant(gray)
+            for r in found:
+                if r.data and r.data not in merged:
+                    merged[r.data] = r
+            if merged:
+                # Đã có ít nhất 1 mã -> đủ cho frame này, không cần thử variant sau.
+                break
+        return list(merged.values())
 
     @staticmethod
     def _polygon_to_rect(polygon: list) -> tuple:
@@ -225,7 +260,15 @@ class CameraScanner:
         return (x, y, max(xs) - x, max(ys) - y)
 
     def _compute_zone(self, frame_w: int, frame_h: int) -> tuple:
-        """Reading zone = hình chữ nhật giữa frame, chiếm zone_ratio."""
+        """Reading zone (x, y, w, h) trong pixel. Ưu tiên zone_rect (custom
+        4 slider), fallback zone_ratio (auto center)."""
+        if self.zone_rect:
+            xp, yp, wp, hp = self.zone_rect
+            x = int(frame_w * xp / 100)
+            y = int(frame_h * yp / 100)
+            w = int(frame_w * wp / 100)
+            h = int(frame_h * hp / 100)
+            return (x, y, w, h)
         r = self.zone_ratio
         w = int(frame_w * r)
         h = int(frame_h * r)
