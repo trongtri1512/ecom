@@ -32,11 +32,19 @@ source = barcode
 ;   0, 1, 2...      = webcam local (index device)
 ;   rtsp://user:pass@ip:554/stream  = IP camera RTSP
 ;   http://ip:8080/video            = HTTP MJPEG (VD IP Webcam app điện thoại)
+;
+; HIKVISION 4MP - dùng SUB STREAM (channel 102) cho barcode scan:
+;   rtsp://admin:PASSWORD@192.168.1.64:554/Streaming/Channels/102
+;   -> 1280x720 @ 15-20fps, đủ nét đọc mã cách 30-50cm, băng thông thấp.
+; Main stream (101) = 2560x1440 quá nét, phí CPU + băng thông.
+; Third stream (103) = 640x360, quá nhỏ để đọc mã Code128/EAN13.
 source = 0
-; Độ phân giải video. 640x480 nhẹ, 1280x720 nét hơn nhưng chậm.
-width = 640
-height = 480
-; FPS mục tiêu cho decode (không quá cao để đỡ CPU).
+; Độ phân giải yêu cầu camera trả về. Với IP camera stream có sẵn resolution,
+; giá trị này chỉ là hint (camera sẽ dùng res của stream).
+; Với webcam local: 1280x720 nét, 640x480 nhẹ.
+width = 1280
+height = 720
+; FPS mục tiêu cho decode. 15-20 với Hikvision sub stream, cao hơn phí CPU.
 fps = 15
 ; Reading zone: phần trăm giữa frame để chấp nhận mã (0.6 = 60% giữa).
 ; Mã ngoài zone bị bỏ qua -> user đặt kiện đúng vị trí mới scan.

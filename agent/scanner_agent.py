@@ -1408,7 +1408,7 @@ class AgentWindow:
                          relief="flat", font=("Consolas", 10), insertbackground="#e2e8f0")
         entry.pack(fill="x", padx=10, pady=(2, 4))
         tk.Label(cam_frame,
-                 text="Ví dụ: 0 (webcam local) · rtsp://user:pass@192.168.1.100:554/stream · http://192.168.1.100:8080/video",
+                 text="VD:  0 (webcam) · Hikvision 4MP: rtsp://admin:PASS@192.168.1.64:554/Streaming/Channels/102 (sub 1280×720)",
                  fg="#64748b", bg=self.PANEL, font=("Segoe UI", 8), wraplength=440,
                  justify="left").pack(anchor="w", padx=10, pady=(0, 6))
 

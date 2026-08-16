@@ -29,9 +29,14 @@ def preprocess_pipeline(bgr_frame) -> list:
       3. gray_sharpen        — unsharp mask (ảnh mờ nhẹ).
       4. gray_adaptive_thresh— adaptive threshold (barcode in mờ, giấy nhăn).
       5. gray_morph_close    — morph close (barcode có noise / vạch bị đứt).
+
+    Với ảnh LỚN (Hikvision main stream 2560×1440), tự resize xuống 1280
+    trước khi preprocess để giảm 4x CPU cost.
     """
     if not HAS_CV2 or bgr_frame is None:
         return [bgr_frame] if bgr_frame is not None else []
+    # Auto resize nếu ảnh quá to (Hikvision 4MP → resize xuống 1280).
+    bgr_frame = resize_if_large(bgr_frame, max_width=1280)
     gray = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2GRAY)
     variants = [("gray_raw", gray)]
 
