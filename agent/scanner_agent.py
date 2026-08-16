@@ -445,7 +445,46 @@ def load_config():
         "inter_key_timeout": cfg.getfloat("scanner", "inter_key_timeout", fallback=0.05),
         "min_length": cfg.getint("scanner", "min_length", fallback=6),
         "beep": cfg.getboolean("scanner", "beep", fallback=True),
+        # Nguồn scan: "barcode" | "camera" | "both"
+        "input_source": cfg.get("input", "source", fallback="barcode").strip().lower(),
+        # Camera settings (dùng khi input_source = camera/both)
+        "camera_source": cfg.get("camera", "source", fallback="0").strip(),
+        "camera_width": cfg.getint("camera", "width", fallback=640),
+        "camera_height": cfg.getint("camera", "height", fallback=480),
+        "camera_fps": cfg.getint("camera", "fps", fallback=15),
+        "camera_zone_ratio": cfg.getfloat("camera", "zone_ratio", fallback=0.6),
+        "camera_dedup_seconds": cfg.getfloat("camera", "dedup_seconds", fallback=3.0),
     }
+
+
+def save_config_partial(updates: dict):
+    """Cập nhật vài field trong config.ini mà giữ nguyên phần còn lại.
+
+    updates: dict phẳng, keys có prefix section (VD "input_source", "camera_source").
+    Dùng từ Settings dialog để lưu thay đổi.
+    """
+    cfg = configparser.ConfigParser()
+    if os.path.exists(CONFIG_PATH):
+        cfg.read(CONFIG_PATH, encoding="utf-8")
+    # Map key -> (section, option)
+    mapping = {
+        "input_source": ("input", "source"),
+        "camera_source": ("camera", "source"),
+        "camera_width": ("camera", "width"),
+        "camera_height": ("camera", "height"),
+        "camera_fps": ("camera", "fps"),
+        "camera_zone_ratio": ("camera", "zone_ratio"),
+        "camera_dedup_seconds": ("camera", "dedup_seconds"),
+    }
+    for k, v in updates.items():
+        sec, opt = mapping.get(k, (None, None))
+        if not sec:
+            continue
+        if not cfg.has_section(sec):
+            cfg.add_section(sec)
+        cfg.set(sec, opt, str(v))
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        cfg.write(f)
 
 
 # ----------------------------- Tiếng bíp / cảnh báo -----------------------------
@@ -867,6 +906,13 @@ class AgentWindow:
             activebackground="#1e293b", activeforeground="#dbeafe",
         )
         self.btn_check_update.pack(side="right", padx=(0, 12))
+        # Nút ⚙ Settings — mở dialog chọn nguồn scan (barcode/camera/both) + camera URL.
+        tk.Button(
+            top, text="⚙ Cài đặt", command=self._open_settings,
+            bg="#0f172a", fg="#a5b4fc", relief="flat", cursor="hand2",
+            font=("Segoe UI", 9), padx=8, pady=2,
+            activebackground="#1e293b", activeforeground="#dbeafe",
+        ).pack(side="right", padx=(0, 6))
         tk.Label(top, text=f"Máy: {cfg['name']} | v{CURRENT_VERSION}", fg="#94a3b8", bg=self.PANEL,
                  font=("Segoe UI", 9)).pack(side="right", padx=(12, 4))
 
@@ -895,6 +941,19 @@ class AgentWindow:
         sb = tk.Scrollbar(listwrap, command=self.listbox.yview)
         sb.pack(side="right", fill="y")
         self.listbox.config(yscrollcommand=sb.set)
+
+        # ---- Camera preview (dưới listbox, chỉ hiện khi source = camera/both) ----
+        cam_source = cfg.get("input_source", "barcode")
+        if cam_source in ("camera", "both") and state.get("camera") is not None:
+            tk.Label(left, text="📷 CAMERA", fg="#94a3b8", bg=self.BG,
+                     font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(8, 4))
+            self.camera_label = tk.Label(left, bg="#000", width=320, height=240)
+            self.camera_label.pack(fill="both", expand=False)
+            # Poll camera frame → render
+            self._camera_after_id = None
+            self._start_camera_render()
+        else:
+            self.camera_label = None
 
         # PHẢI: thống kê theo ĐVVC trong ngày
         right = tk.Frame(body, bg=self.BG)
@@ -1266,6 +1325,144 @@ class AgentWindow:
                 carrier = parts[-1] if len(parts) >= 3 else sid
                 self.listbox.insert(0, f"{_now_vn('%H:%M:%S')}  📤 Import OPS   {carrier}: {sid}")
                 self.listbox.itemconfig(0, fg="#3b82f6")
+
+    # --- Camera preview ---
+    def _start_camera_render(self):
+        """Render frame từ camera scanner mỗi 100ms lên self.camera_label."""
+        def tick():
+            cam = self.state.get("camera")
+            if cam and self.camera_label:
+                try:
+                    frame = cam.get_annotated_frame()
+                    if frame is not None:
+                        import cv2 as _cv2
+                        # Resize xuống 320x240 cho gọn
+                        h, w = frame.shape[:2]
+                        target_w = 320
+                        target_h = int(h * target_w / w)
+                        frame = _cv2.resize(frame, (target_w, target_h))
+                        rgb = _cv2.cvtColor(frame, _cv2.COLOR_BGR2RGB)
+                        img = _PILImage.fromarray(rgb)
+                        self._camera_photo = ImageTk.PhotoImage(img)
+                        self.camera_label.config(image=self._camera_photo)
+                except Exception as e:
+                    print(f"[ui] camera render error: {e}")
+            self._camera_after_id = self.root.after(100, tick)
+        tick()
+
+    # --- Settings dialog ---
+    def _open_settings(self):
+        """Dialog chọn nguồn scan + cấu hình camera. Save vào config.ini +
+        restart camera live không cần đóng agent."""
+        from tkinter import messagebox
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Cài đặt nguồn quét")
+        dlg.configure(bg=self.PANEL)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.geometry("500x420")
+        dlg.resizable(False, False)
+        dlg.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 250
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 210
+        dlg.geometry(f"+{max(x, 20)}+{max(y, 20)}")
+
+        tk.Label(dlg, text="⚙ Cài đặt nguồn quét mã",
+                 fg="#a5b4fc", bg=self.PANEL, font=("Segoe UI", 13, "bold")
+                 ).pack(anchor="w", padx=16, pady=(14, 8))
+
+        # --- Nguồn scan ---
+        src_frame = tk.LabelFrame(dlg, text=" Nguồn nhận mã ",
+                                   fg="#e2e8f0", bg=self.PANEL,
+                                   font=("Segoe UI", 10, "bold"), bd=1, relief="solid")
+        src_frame.pack(fill="x", padx=16, pady=(0, 10))
+        src_var = tk.StringVar(value=self.cfg.get("input_source", "barcode"))
+        for val, label in [
+            ("barcode", "🎯 Máy quét bàn phím (mặc định)"),
+            ("camera", "📷 Camera (webcam / IP camera)"),
+            ("both", "🔀 Cả 2 song song"),
+        ]:
+            tk.Radiobutton(src_frame, text=label, variable=src_var, value=val,
+                           fg="#e2e8f0", bg=self.PANEL, selectcolor=self.BG,
+                           font=("Segoe UI", 10), activebackground=self.PANEL,
+                           activeforeground="#e2e8f0", anchor="w"
+                           ).pack(anchor="w", padx=10, pady=2, fill="x")
+
+        # --- Camera source ---
+        cam_frame = tk.LabelFrame(dlg, text=" Camera source (khi bật camera) ",
+                                   fg="#e2e8f0", bg=self.PANEL,
+                                   font=("Segoe UI", 10, "bold"), bd=1, relief="solid")
+        cam_frame.pack(fill="x", padx=16, pady=(0, 10))
+        tk.Label(cam_frame, text="Nguồn:", fg="#94a3b8", bg=self.PANEL,
+                 font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(6, 0))
+        cam_src_var = tk.StringVar(value=str(self.cfg.get("camera_source", "0")))
+        entry = tk.Entry(cam_frame, textvariable=cam_src_var, bg=self.BG, fg="#e2e8f0",
+                         relief="flat", font=("Consolas", 10), insertbackground="#e2e8f0")
+        entry.pack(fill="x", padx=10, pady=(2, 4))
+        tk.Label(cam_frame,
+                 text="Ví dụ: 0 (webcam local) · rtsp://user:pass@192.168.1.100:554/stream · http://192.168.1.100:8080/video",
+                 fg="#64748b", bg=self.PANEL, font=("Segoe UI", 8), wraplength=440,
+                 justify="left").pack(anchor="w", padx=10, pady=(0, 6))
+
+        # --- Reading zone ratio ---
+        zone_frame = tk.Frame(cam_frame, bg=self.PANEL)
+        zone_frame.pack(fill="x", padx=10, pady=(0, 6))
+        zone_var = tk.DoubleVar(value=float(self.cfg.get("camera_zone_ratio", 0.6)))
+        tk.Label(zone_frame, text="Reading zone (%):", fg="#94a3b8", bg=self.PANEL,
+                 font=("Segoe UI", 9)).pack(side="left")
+        zone_lbl = tk.Label(zone_frame, text=f"{int(zone_var.get()*100)}%",
+                            fg="#e2e8f0", bg=self.PANEL, font=("Segoe UI", 9, "bold"), width=5)
+        zone_lbl.pack(side="right")
+        zone_scale = tk.Scale(cam_frame, from_=0.3, to=1.0, resolution=0.05,
+                              orient="horizontal", variable=zone_var, showvalue=0,
+                              bg=self.PANEL, fg="#e2e8f0", troughcolor=self.BG,
+                              highlightthickness=0,
+                              command=lambda v: zone_lbl.config(text=f"{int(float(v)*100)}%"))
+        zone_scale.pack(fill="x", padx=10, pady=(0, 6))
+
+        # --- Buttons ---
+        btns = tk.Frame(dlg, bg=self.PANEL)
+        btns.pack(side="bottom", fill="x", padx=14, pady=(6, 12))
+
+        def save_and_apply():
+            try:
+                new_src = src_var.get()
+                new_cam = cam_src_var.get().strip() or "0"
+                new_zone = round(zone_var.get(), 2)
+                save_config_partial({
+                    "input_source": new_src,
+                    "camera_source": new_cam,
+                    "camera_zone_ratio": new_zone,
+                })
+                dlg.destroy()
+                # Restart camera + notify
+                restart = self.state.get("restart_camera")
+                if restart:
+                    cam = restart()
+                    if new_src in ("camera", "both") and cam is None:
+                        messagebox.showwarning(
+                            "Không mở được camera",
+                            f"Không kết nối được camera '{new_cam}'.\n"
+                            "Kiểm tra webcam/IP camera có online chưa.\n\n"
+                            "Máy quét bàn phím vẫn hoạt động bình thường."
+                        )
+                    else:
+                        messagebox.showinfo(
+                            "Đã lưu",
+                            f"Nguồn scan: {new_src}\n"
+                            f"Camera: {new_cam if new_src != 'barcode' else '(không dùng)'}\n\n"
+                            "Lưu ý: nếu đổi nguồn barcode/both, phải RESTART agent để "
+                            "áp dụng listener bàn phím."
+                        )
+            except Exception as ex:
+                messagebox.showerror("Lỗi", str(ex))
+
+        tk.Button(btns, text="Huỷ", command=dlg.destroy,
+                  bg="#334155", fg="#e2e8f0", relief="flat",
+                  font=("Segoe UI", 10), padx=14, pady=5).pack(side="right", padx=(6, 0))
+        tk.Button(btns, text="💾 Lưu & Áp dụng", command=save_and_apply,
+                  bg="#4f46e5", fg="white", relief="flat",
+                  font=("Segoe UI", 10, "bold"), padx=14, pady=5).pack(side="right")
 
     # --- Cập nhật ---
     def _check_update_now(self, silent_if_no_update: bool = False):
@@ -1720,7 +1917,62 @@ def main():
         ui_events.put({"code": code, "result": result})
 
     catcher = ScanCatcher(cfg, handle_code)
-    state = {"cfg": cfg, "catcher": catcher, "oq": oq, "sender": sender, "window": None}
+    state = {"cfg": cfg, "catcher": catcher, "oq": oq, "sender": sender,
+             "window": None, "camera": None, "handle_code": handle_code}
+
+    # ---- Camera scanner (tuỳ chọn) ----
+    def _start_camera(_cfg):
+        """Khởi động camera scanner nếu source = camera hoặc both."""
+        source = _cfg.get("input_source", "barcode")
+        if source not in ("camera", "both"):
+            return None
+        try:
+            from camera_scanner import CameraScanner, HAS_CV2
+        except ImportError:
+            try:
+                from .camera_scanner import CameraScanner, HAS_CV2  # type: ignore
+            except Exception as e:
+                print(f"[camera] Không import được camera_scanner: {e}")
+                return None
+        if not HAS_CV2:
+            print("[camera] Chưa cài opencv-python -> bỏ qua")
+            return None
+        try:
+            cam = CameraScanner(
+                source=_cfg.get("camera_source", "0"),
+                resolution=(_cfg.get("camera_width", 640), _cfg.get("camera_height", 480)),
+                fps_target=_cfg.get("camera_fps", 15),
+                zone_ratio=_cfg.get("camera_zone_ratio", 0.6),
+                dedup_seconds=_cfg.get("camera_dedup_seconds", 3.0),
+                on_scan=handle_code,  # cùng entry point với máy quét bàn phím
+            )
+            if cam.start():
+                print(f"[camera] Đã mở source={_cfg.get('camera_source')}")
+                return cam
+            print(f"[camera] Mở camera FAIL (source={_cfg.get('camera_source')})")
+            return None
+        except Exception as e:
+            print(f"[camera] Init error: {e}")
+            return None
+
+    def restart_camera():
+        """Gọi khi user đổi settings — restart camera với source mới."""
+        cam = state.get("camera")
+        if cam:
+            try:
+                cam.stop()
+            except Exception:
+                pass
+            state["camera"] = None
+        # Reload cfg từ file
+        new_cfg = load_config()
+        cfg.update(new_cfg)
+        state["camera"] = _start_camera(cfg)
+        # Restart / stop keyboard listener theo source
+        return state["camera"]
+
+    state["restart_camera"] = restart_camera
+    state["camera"] = _start_camera(cfg)
 
     # Chạy nền: gửi lại mã offline.
     threading.Thread(target=sender.flush_loop, daemon=True).start()
@@ -1747,9 +1999,13 @@ def main():
 
     threading.Thread(target=_auto_update_loop, daemon=True).start()
 
-    # Nghe bàn phím toàn cục.
-    listener = keyboard.Listener(on_press=catcher.on_press)
-    listener.start()
+    # Nghe bàn phím toàn cục CHỈ KHI source = barcode/both.
+    listener = None
+    if cfg.get("input_source", "barcode") in ("barcode", "both"):
+        listener = keyboard.Listener(on_press=catcher.on_press)
+        listener.start()
+    else:
+        print(f"[input] source={cfg.get('input_source')} -> KHÔNG bật keyboard listener")
 
     print(f"Scanner Agent v{CURRENT_VERSION} đang chạy. Server: {cfg['url']}  |  Máy: {cfg['name']}")
 

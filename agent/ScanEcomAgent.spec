@@ -44,6 +44,20 @@ if os.path.isdir(_dlls_dir):
 _tk_datas += collect_data_files("tkinter", include_py_files=False)
 _tk_bins += collect_dynamic_libs("tkinter")
 
+# --- BUNDLE pyzbar (Windows cần libzbar-64.dll + libiconv.dll) ---
+# pyzbar wheel embed sẵn 2 dll trong site-packages/pyzbar. PyInstaller thường
+# tự pick nhưng an toàn hơn: dùng collect_dynamic_libs.
+try:
+    _tk_bins += collect_dynamic_libs("pyzbar")
+except Exception:
+    pass  # Không có pyzbar cũng OK (camera fallback không có sẽ tự skip).
+
+# --- Bundle opencv (cv2 tự lo, nhưng đề phòng missing hook) ---
+try:
+    _tk_datas += collect_data_files("cv2", include_py_files=False)
+except Exception:
+    pass
+
 a = Analysis(
     ['scanner_agent.py'],
     pathex=[],
@@ -54,7 +68,11 @@ a = Analysis(
     # (khớp GitHub Actions tag → auto-update mới compare đúng).
     datas=[('VERSION', '.')] + _tk_datas,
     # pystray/PIL nạp backend động; tkinter cho cửa sổ GUI -> khai báo để gom đủ.
-    hiddenimports=['pystray._win32', 'PIL._tkinter_finder', 'tkinter', 'tkinter.ttk', '_tkinter'],
+    hiddenimports=[
+        'pystray._win32', 'PIL._tkinter_finder', 'tkinter', 'tkinter.ttk', '_tkinter',
+        # Camera scanner (optional, không crash nếu thiếu vì đã try/except trong code)
+        'cv2', 'numpy', 'pyzbar', 'pyzbar.pyzbar', 'camera_scanner',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

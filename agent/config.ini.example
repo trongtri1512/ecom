@@ -19,3 +19,27 @@ inter_key_timeout = 0.05
 min_length = 6
 ; Bật/tắt tiếng bíp phản hồi.
 beep = true
+
+[input]
+; Nguồn nhận mã vận đơn:
+;   barcode  = chỉ máy quét bàn phím (mặc định)
+;   camera   = chỉ camera
+;   both     = song song cả 2, dedup chung
+source = barcode
+
+[camera]
+; Camera source (dùng khi input.source = camera hoặc both):
+;   0, 1, 2...      = webcam local (index device)
+;   rtsp://user:pass@ip:554/stream  = IP camera RTSP
+;   http://ip:8080/video            = HTTP MJPEG (VD IP Webcam app điện thoại)
+source = 0
+; Độ phân giải video. 640x480 nhẹ, 1280x720 nét hơn nhưng chậm.
+width = 640
+height = 480
+; FPS mục tiêu cho decode (không quá cao để đỡ CPU).
+fps = 15
+; Reading zone: phần trăm giữa frame để chấp nhận mã (0.6 = 60% giữa).
+; Mã ngoài zone bị bỏ qua -> user đặt kiện đúng vị trí mới scan.
+zone_ratio = 0.6
+; Cùng mã không gửi lại trong bao nhiêu giây (chống spam khi kiện đứng yên).
+dedup_seconds = 3.0
