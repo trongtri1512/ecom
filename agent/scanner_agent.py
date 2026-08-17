@@ -459,8 +459,33 @@ def load_config():
         "camera_zone_y": cfg.getint("camera", "zone_y", fallback=0),
         "camera_zone_w": cfg.getint("camera", "zone_w", fallback=0),
         "camera_zone_h": cfg.getint("camera", "zone_h", fallback=0),
+        # Zone polygon tự do: chuỗi "x1,y1;x2,y2;x3,y3;..." percent.
+        # Ưu tiên hơn zone_rect nếu >= 3 điểm.
+        "camera_zone_polygon": cfg.get("camera", "zone_polygon", fallback=""),
         "camera_dedup_seconds": cfg.getfloat("camera", "dedup_seconds", fallback=3.0),
     }
+
+
+def _parse_zone_polygon(s: str) -> list:
+    """Parse 'x1,y1;x2,y2;...' → [(x1,y1), (x2,y2), ...] hoặc [] nếu invalid."""
+    if not s or not s.strip():
+        return []
+    out = []
+    for pt in s.split(";"):
+        pt = pt.strip()
+        if not pt:
+            continue
+        try:
+            xs, ys = pt.split(",")
+            out.append((int(float(xs.strip())), int(float(ys.strip()))))
+        except Exception:
+            return []
+    return out if len(out) >= 3 else []
+
+
+def _serialize_zone_polygon(points: list) -> str:
+    """Serialize [(x1,y1), ...] → 'x1,y1;x2,y2;...'"""
+    return ";".join(f"{int(x)},{int(y)}" for x, y in points)
 
 
 def save_config_partial(updates: dict):
@@ -486,6 +511,7 @@ def save_config_partial(updates: dict):
         "camera_zone_y": ("camera", "zone_y"),
         "camera_zone_w": ("camera", "zone_w"),
         "camera_zone_h": ("camera", "zone_h"),
+        "camera_zone_polygon": ("camera", "zone_polygon"),
         "camera_dedup_seconds": ("camera", "dedup_seconds"),
     }
     for k, v in updates.items():
@@ -1628,44 +1654,100 @@ class AgentWindow:
                                     font=("Segoe UI", 10, "bold"), bd=1, relief="solid")
         prev_frame.pack(fill="x", padx=16, pady=(0, 10))
 
-        # Zone hiện tại (percent 0-100) — khởi từ config, default 20/20/60/60.
-        _zx = int(self.cfg.get("camera_zone_x", 0)) or 20
-        _zy = int(self.cfg.get("camera_zone_y", 0)) or 20
-        _zw = int(self.cfg.get("camera_zone_w", 0)) or 60
-        _zh = int(self.cfg.get("camera_zone_h", 0)) or 60
-        zone_state = {"x": _zx, "y": _zy, "w": _zw, "h": _zh,
-                      "drag_start": None, "drag_end": None, "drawing": False}
+        # Zone POLYGON tự do (list điểm percent). Load từ config, fallback rect
+        # hoặc default hình chữ nhật 20/20/60/60.
+        _existing_poly = _parse_zone_polygon(self.cfg.get("camera_zone_polygon", ""))
+        if _existing_poly:
+            zone_state_polygon = list(_existing_poly)
+        else:
+            # Convert từ rect cũ (hoặc default) thành 4 điểm.
+            _zx = int(self.cfg.get("camera_zone_x", 0)) or 20
+            _zy = int(self.cfg.get("camera_zone_y", 0)) or 20
+            _zw = int(self.cfg.get("camera_zone_w", 0)) or 60
+            _zh = int(self.cfg.get("camera_zone_h", 0)) or 60
+            zone_state_polygon = [(_zx, _zy), (_zx + _zw, _zy),
+                                   (_zx + _zw, _zy + _zh), (_zx, _zy + _zh)]
+        # Trạng thái edit: đang vẽ polygon mới (list điểm percent tạm)
+        edit_state = {"drawing": False, "points": []}
 
-        # Canvas 400×225 (16:9 gọn) — hiển thị video preview + zone overlay.
+        # Canvas 400×225 (16:9 gọn).
         PREV_W, PREV_H = 400, 225
         preview = tk.Canvas(prev_frame, width=PREV_W, height=PREV_H,
                             bg="#000", highlightthickness=1, highlightbackground="#334155",
                             cursor="crosshair")
         preview.pack(padx=10, pady=(6, 4))
 
-        # Info + reset button
+        # Info + buttons
         info_row = tk.Frame(prev_frame, bg=self.PANEL)
         info_row.pack(fill="x", padx=10, pady=(0, 6))
         zone_info_lbl = tk.Label(info_row,
-                                  text=f"Zone: X={_zx}% Y={_zy}% W={_zw}% H={_zh}%",
+                                  text=f"Zone: {len(zone_state_polygon)} điểm",
                                   fg="#94a3b8", bg=self.PANEL, font=("Consolas", 9))
         zone_info_lbl.pack(side="left")
 
-        def _reset_zone():
-            zone_state.update({"x": 20, "y": 20, "w": 60, "h": 60})
-            zone_info_lbl.config(text="Zone: X=20% Y=20% W=60% H=60%")
+        def _update_zone_label():
+            if edit_state["drawing"]:
+                zone_info_lbl.config(
+                    text=f"✏ Đang vẽ: {len(edit_state['points'])} điểm — bấm ✅ Xong khi đủ",
+                    fg="#fbbf24")
+            else:
+                zone_info_lbl.config(
+                    text=f"Zone: {len(zone_state_polygon)} điểm (hình đa giác tự do)",
+                    fg="#94a3b8")
 
-        tk.Button(info_row, text="↺ Reset zone", command=_reset_zone,
+        def _reset_zone():
+            """Reset về hình chữ nhật mặc định 4 điểm."""
+            zone_state_polygon.clear()
+            zone_state_polygon.extend([(20, 20), (80, 20), (80, 80), (20, 80)])
+            edit_state["drawing"] = False
+            edit_state["points"] = []
+            _update_zone_label()
+
+        def _start_draw():
+            """Bắt đầu vẽ polygon mới — xoá zone cũ, click từng điểm."""
+            edit_state["drawing"] = True
+            edit_state["points"] = []
+            preview.config(cursor="pencil")
+            _update_zone_label()
+
+        def _finish_draw():
+            """Kết thúc vẽ — chốt polygon nếu >= 3 điểm, không thì cancel."""
+            if len(edit_state["points"]) >= 3:
+                zone_state_polygon.clear()
+                zone_state_polygon.extend(edit_state["points"])
+            edit_state["drawing"] = False
+            edit_state["points"] = []
+            preview.config(cursor="crosshair")
+            _update_zone_label()
+
+        def _undo_point():
+            """Xoá điểm cuối cùng khi đang vẽ."""
+            if edit_state["drawing"] and edit_state["points"]:
+                edit_state["points"].pop()
+                _update_zone_label()
+
+        # Row 1: Vẽ / Xong / Undo
+        btn_row = tk.Frame(prev_frame, bg=self.PANEL)
+        btn_row.pack(fill="x", padx=10, pady=(0, 4))
+        tk.Button(btn_row, text="✏ Vẽ zone mới", command=_start_draw,
+                  bg="#059669", fg="white", relief="flat",
+                  font=("Segoe UI", 9, "bold"), padx=10, pady=3).pack(side="left")
+        tk.Button(btn_row, text="✅ Xong", command=_finish_draw,
+                  bg="#4f46e5", fg="white", relief="flat",
+                  font=("Segoe UI", 9), padx=10, pady=3).pack(side="left", padx=(4, 0))
+        tk.Button(btn_row, text="↶ Undo", command=_undo_point,
                   bg="#334155", fg="#e2e8f0", relief="flat",
-                  font=("Segoe UI", 8), padx=8, pady=2).pack(side="right")
-        # Nút reload preview với source hiện tại (thay vì auto reload gây thrashing).
-        tk.Button(info_row, text="🔄 Xem preview",
+                  font=("Segoe UI", 9), padx=8, pady=3).pack(side="left", padx=(4, 0))
+        tk.Button(btn_row, text="↺ Reset", command=_reset_zone,
+                  bg="#334155", fg="#e2e8f0", relief="flat",
+                  font=("Segoe UI", 9), padx=8, pady=3).pack(side="left", padx=(4, 0))
+        tk.Button(btn_row, text="🔄 Xem preview",
                   command=lambda: _reload_preview(),
                   bg="#4f46e5", fg="white", relief="flat",
-                  font=("Segoe UI", 8, "bold"), padx=10, pady=2).pack(side="right", padx=(0, 6))
+                  font=("Segoe UI", 9, "bold"), padx=10, pady=3).pack(side="right")
 
         tk.Label(prev_frame,
-                 text="💡 Đặt kiện hàng vào frame → click và kéo chuột trên video để vẽ vùng quét.",
+                 text="💡 Bấm ✏ Vẽ zone → click từng điểm quanh vùng quét (hình bất kỳ) → bấm ✅ Xong.",
                  fg="#64748b", bg=self.PANEL, font=("Segoe UI", 8),
                  wraplength=460, justify="left").pack(anchor="w", padx=10, pady=(0, 6))
 
@@ -1734,28 +1816,57 @@ class AgentWindow:
                     pass
                 preview_state["cap"] = None
 
+        def _pct_to_px(points, canvas_w, canvas_h):
+            """Convert list [(px, py), ...] % -> [(x, y), ...] pixel."""
+            return [(int(px * canvas_w / 100), int(py * canvas_h / 100))
+                    for (px, py) in points]
+
         def _draw_zone_overlay(canvas_w, canvas_h):
-            """Vẽ zone dashed vàng lên canvas theo zone_state (percent)."""
+            """Vẽ polygon zone lên canvas.
+
+            - Chế độ vẽ (edit_state["drawing"]): chấm tròn đỏ tại mỗi điểm
+              đã click + đường thẳng nối các điểm (polyline mở).
+            - Chế độ confirmed: polygon đóng dashed vàng theo
+              zone_state_polygon (percent -> pixel).
+            """
             preview.delete("zone")
             preview.delete("zone_label")
             preview.delete("draw_preview")
-            zs = zone_state
-            # Nếu đang kéo -> vẽ zone tạm theo drag_start/drag_end (pixel canvas).
-            if zs["drawing"] and zs["drag_start"] and zs["drag_end"]:
-                x1, y1 = zs["drag_start"]
-                x2, y2 = zs["drag_end"]
-                preview.create_rectangle(min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2),
-                                          outline="#fbbf24", dash=(6, 4), width=2,
-                                          tags="draw_preview")
+
+            if edit_state["drawing"]:
+                pts_px = _pct_to_px(edit_state["points"], canvas_w, canvas_h)
+                # Đường thẳng nối các điểm đã click
+                for i in range(len(pts_px) - 1):
+                    x1, y1 = pts_px[i]
+                    x2, y2 = pts_px[i + 1]
+                    preview.create_line(x1, y1, x2, y2, fill="#fbbf24",
+                                         width=2, tags="draw_preview")
+                # Chấm tròn tại mỗi điểm
+                for idx, (x, y) in enumerate(pts_px):
+                    r = 4
+                    preview.create_oval(x - r, y - r, x + r, y + r,
+                                         fill="#ef4444", outline="#fff",
+                                         width=1, tags="draw_preview")
+                    preview.create_text(x + 6, y - 6, text=str(idx + 1),
+                                         fill="#fff", anchor="nw",
+                                         font=("Segoe UI", 8, "bold"),
+                                         tags="draw_preview")
                 return
-            # Vẽ zone đã confirm theo percent.
-            x = int(zs["x"] * canvas_w / 100)
-            y = int(zs["y"] * canvas_h / 100)
-            w = int(zs["w"] * canvas_w / 100)
-            h = int(zs["h"] * canvas_h / 100)
-            preview.create_rectangle(x, y, x + w, y + h,
-                                      outline="#fbbf24", dash=(8, 4), width=2, tags="zone")
-            preview.create_text(x + 4, y - 8, text="READING ZONE",
+
+            # Confirmed: polygon đóng dashed vàng.
+            if len(zone_state_polygon) < 3:
+                return
+            pts_px = _pct_to_px(zone_state_polygon, canvas_w, canvas_h)
+            # tk Canvas không có dashed polygon, dùng line từng cạnh có dash.
+            n = len(pts_px)
+            for i in range(n):
+                x1, y1 = pts_px[i]
+                x2, y2 = pts_px[(i + 1) % n]
+                preview.create_line(x1, y1, x2, y2, fill="#fbbf24",
+                                     dash=(8, 4), width=2, tags="zone")
+            # Label ở điểm đầu
+            x0, y0 = pts_px[0]
+            preview.create_text(x0 + 4, y0 - 10, text="READING ZONE",
                                  anchor="nw", fill="#fbbf24",
                                  font=("Segoe UI", 8, "bold"), tags="zone_label")
 
@@ -1826,44 +1937,26 @@ class AgentWindow:
                 print(f"[preview] tick fatal: {ex}\n{traceback.format_exc()[-500:]}")
             preview_state["after_id"] = dlg.after(200, _tick_preview)
 
-        # Drag-to-draw handlers
-        def _on_press(e):
-            zone_state["drag_start"] = (e.x, e.y)
-            zone_state["drag_end"] = (e.x, e.y)
-            zone_state["drawing"] = True
-
-        def _on_drag(e):
-            if not zone_state["drawing"]:
+        # Click-to-add-point handlers (chỉ hoạt động khi edit_state["drawing"])
+        def _on_click(e):
+            if not edit_state["drawing"]:
                 return
-            zone_state["drag_end"] = (max(0, min(PREV_W, e.x)),
-                                      max(0, min(PREV_H, e.y)))
+            # Clamp toạ độ trong canvas
+            x = max(0, min(PREV_W, e.x))
+            y = max(0, min(PREV_H, e.y))
+            # Convert pixel -> percent (0..100)
+            px = int(round(x * 100 / PREV_W))
+            py = int(round(y * 100 / PREV_H))
+            edit_state["points"].append((px, py))
+            _update_zone_label()
 
-        def _on_release(e):
-            if not zone_state["drawing"]:
-                return
-            zone_state["drawing"] = False
-            x1, y1 = zone_state["drag_start"]
-            x2, y2 = zone_state["drag_end"]
-            # Tính rect
-            rx, ry = min(x1, x2), min(y1, y2)
-            rw, rh = abs(x2 - x1), abs(y2 - y1)
-            # Nếu kéo quá nhỏ (<20px) -> bỏ qua, giữ zone cũ.
-            if rw < 20 or rh < 20:
-                zone_info_lbl.config(text=f"Zone: X={zone_state['x']}% Y={zone_state['y']}% "
-                                           f"W={zone_state['w']}% H={zone_state['h']}% "
-                                           f"(quá nhỏ, giữ nguyên)")
-                return
-            # Convert pixel -> percent
-            zone_state["x"] = int(rx * 100 / PREV_W)
-            zone_state["y"] = int(ry * 100 / PREV_H)
-            zone_state["w"] = int(rw * 100 / PREV_W)
-            zone_state["h"] = int(rh * 100 / PREV_H)
-            zone_info_lbl.config(text=f"Zone: X={zone_state['x']}% Y={zone_state['y']}% "
-                                       f"W={zone_state['w']}% H={zone_state['h']}%")
+        def _on_double_click(e):
+            """Double-click = kết thúc vẽ (nếu đã có >= 3 điểm)."""
+            if edit_state["drawing"] and len(edit_state["points"]) >= 3:
+                _finish_draw()
 
-        preview.bind("<ButtonPress-1>", _on_press)
-        preview.bind("<B1-Motion>", _on_drag)
-        preview.bind("<ButtonRelease-1>", _on_release)
+        preview.bind("<ButtonPress-1>", _on_click)
+        preview.bind("<Double-Button-1>", _on_double_click)
 
         # Cleanup khi đóng dialog
         _orig_destroy = dlg.destroy
@@ -1893,22 +1986,26 @@ class AgentWindow:
                     new_cam = _build_hik_url()
                 else:
                     new_cam = custom_url_var.get().strip() or "0"
+                # Serialize polygon zone; clear old rect config để tránh lẫn.
+                poly_str = _serialize_zone_polygon(zone_state_polygon)
                 updates = {
                     "input_source": new_src,
                     "camera_source": new_cam,
-                    "camera_zone_x": zone_state["x"],
-                    "camera_zone_y": zone_state["y"],
-                    "camera_zone_w": zone_state["w"],
-                    "camera_zone_h": zone_state["h"],
+                    "camera_zone_polygon": poly_str,
+                    "camera_zone_x": 0,
+                    "camera_zone_y": 0,
+                    "camera_zone_w": 0,
+                    "camera_zone_h": 0,
                 }
                 save_config_partial(updates)
                 # Update cfg trong window để _apply_camera_panel_visibility đọc đúng
                 self.cfg["input_source"] = new_src
                 self.cfg["camera_source"] = new_cam
-                self.cfg["camera_zone_x"] = zone_state["x"]
-                self.cfg["camera_zone_y"] = zone_state["y"]
-                self.cfg["camera_zone_w"] = zone_state["w"]
-                self.cfg["camera_zone_h"] = zone_state["h"]
+                self.cfg["camera_zone_polygon"] = poly_str
+                self.cfg["camera_zone_x"] = 0
+                self.cfg["camera_zone_y"] = 0
+                self.cfg["camera_zone_w"] = 0
+                self.cfg["camera_zone_h"] = 0
                 dlg.destroy()
                 # Restart camera + notify + apply UI show/hide.
                 restart = self.state.get("restart_camera")
@@ -2417,12 +2514,15 @@ def main():
             zone_rect = None
             if zw > 0 and zh > 0 and (zx + zw) <= 100 and (zy + zh) <= 100:
                 zone_rect = (zx, zy, zw, zh)
+            # Polygon tự do (ưu tiên hơn rect nếu >= 3 điểm hợp lệ).
+            zone_polygon = _parse_zone_polygon(_cfg.get("camera_zone_polygon", ""))
             cam = CameraScanner(
                 source=_cfg.get("camera_source", "0"),
                 resolution=(_cfg.get("camera_width", 640), _cfg.get("camera_height", 480)),
                 fps_target=_cfg.get("camera_fps", 15),
                 zone_ratio=_cfg.get("camera_zone_ratio", 0.6),
                 zone_rect=zone_rect,
+                zone_polygon=zone_polygon or None,
                 dedup_seconds=_cfg.get("camera_dedup_seconds", 3.0),
                 on_scan=handle_code,
             )

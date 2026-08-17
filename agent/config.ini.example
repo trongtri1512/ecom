@@ -56,5 +56,10 @@ zone_x = 0
 zone_y = 0
 zone_w = 0
 zone_h = 0
+; Zone POLYGON tự do (hình bất kỳ: hình thang, tam giác, đa giác N cạnh).
+; Format: "x1,y1;x2,y2;x3,y3;..." percent 0-100. Ít nhất 3 điểm.
+; Nếu điền, override cả zone_ratio LẪN zone_rect ở trên.
+; Vẽ trực tiếp trong Settings dialog: bấm ✏ Vẽ zone → click từng điểm.
+zone_polygon =
 ; Cùng mã không gửi lại trong bao nhiêu giây (chống spam khi kiện đứng yên).
 dedup_seconds = 3.0

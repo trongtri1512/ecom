@@ -33,6 +33,13 @@ try:
 except ImportError:
     HAS_PYZBAR = False
 
+# ZXing-cpp (decoder backup, mạnh hơn pyzbar trên ảnh mờ/nghiêng).
+try:
+    import zxingcpp as _zxingcpp  # type: ignore
+    HAS_ZXING = True
+except ImportError:
+    HAS_ZXING = False
+
 # Preprocess module (optional — nếu có sẽ dùng để tăng detect rate).
 try:
     from camera_preprocess import preprocess_pipeline, resize_if_large
@@ -71,20 +78,17 @@ class CameraScanner:
         resolution: tuple = (640, 480),
         fps_target: int = 15,
         zone_ratio: float = 0.6,
-        zone_rect: Optional[tuple] = None,  # (x%, y%, w%, h%) — nếu có thì override zone_ratio
+        zone_rect: Optional[tuple] = None,     # (x%, y%, w%, h%) — legacy
+        zone_polygon: Optional[list] = None,   # [(x%, y%), ...] polygon tự do (>= 3 điểm)
         dedup_seconds: float = 3.0,
         on_scan: Optional[Callable[[str], None]] = None,
     ):
         """
-        source:
-          - "0" / "1" / ... (số) -> webcam local index đó
-          - "rtsp://..."         -> IP camera RTSP
-          - "http://..."         -> HTTP MJPEG stream
-        zone_ratio: reading zone tự căn giữa, chiếm zone_ratio (0.3-1.0).
-        zone_rect: (x%, y%, w%, h%) mỗi giá trị 0-100, VD (20, 30, 60, 40)
-                   = zone bắt đầu ở 20% từ trái, 30% từ trên, rộng 60%, cao 40%.
-                   Nếu None -> dùng zone_ratio.
-        on_scan(code: str): callback khi detect mã hợp lệ (đã dedup + in zone).
+        Reading zone (thứ tự ưu tiên):
+          1. zone_polygon: list điểm percent [(x1,y1), (x2,y2), ...] — polygon
+             TỰ DO, hình thang / tam giác / bất kỳ hình gì user vẽ. >= 3 điểm.
+          2. zone_rect: (x%, y%, w%, h%) — hình chữ nhật.
+          3. zone_ratio: hình chữ nhật căn giữa, chiếm ratio.
         """
         if not HAS_CV2:
             raise RuntimeError("Chưa cài opencv-python. pip install opencv-python")
@@ -93,6 +97,7 @@ class CameraScanner:
         self.fps_target = fps_target
         self.zone_ratio = zone_ratio
         self.zone_rect = zone_rect
+        self.zone_polygon = zone_polygon if (zone_polygon and len(zone_polygon) >= 3) else None
         self.dedup_seconds = dedup_seconds
         self.on_scan = on_scan
 
@@ -162,9 +167,9 @@ class CameraScanner:
             if frame is not None:
                 results = self._decode_frame(frame)
                 # Mark in_zone
-                zone = self._compute_zone(frame.shape[1], frame.shape[0])
+                zone_poly = self._compute_zone_polygon_px(frame.shape[1], frame.shape[0])
                 for r in results:
-                    r.in_zone = self._rect_intersects_zone(r.rect, zone)
+                    r.in_zone = self._barcode_in_zone(r.rect, zone_poly)
                 with self._lock:
                     self._latest_results = results
                 # Trigger callback cho mã in_zone + không dedup
@@ -212,7 +217,7 @@ class CameraScanner:
                         ))
             except Exception:
                 pass
-        # 2. Fallback pyzbar
+        # 2. pyzbar
         if not results and HAS_PYZBAR:
             try:
                 decoded = _pyzbar_decode(gray_frame)
@@ -228,25 +233,85 @@ class CameraScanner:
                     ))
             except Exception as e:
                 print(f"[camera] pyzbar error: {e}")
+        # 3. ZXing-cpp fallback (mạnh trên ảnh mờ/nghiêng — dùng khi pyzbar
+        #    và CV BarcodeDetector đều fail)
+        if not results and HAS_ZXING:
+            try:
+                zresults = _zxingcpp.read_barcodes(gray_frame)
+                for zr in zresults:
+                    code = getattr(zr, "text", "") or ""
+                    if not code:
+                        continue
+                    btype = str(getattr(zr, "format", "")) or ""
+                    polygon = []
+                    rect = (0, 0, 0, 0)
+                    try:
+                        pos = zr.position
+                        polygon = [
+                            (int(pos.top_left.x), int(pos.top_left.y)),
+                            (int(pos.top_right.x), int(pos.top_right.y)),
+                            (int(pos.bottom_right.x), int(pos.bottom_right.y)),
+                            (int(pos.bottom_left.x), int(pos.bottom_left.y)),
+                        ]
+                        rect = self._polygon_to_rect(polygon)
+                    except Exception:
+                        pass
+                    results.append(BarcodeResult(
+                        data=code, barcode_type=btype,
+                        polygon=polygon, rect=rect,
+                    ))
+            except Exception as e:
+                print(f"[camera] zxing error: {e}")
         return results
 
     def _decode_frame(self, frame: "np.ndarray") -> list[BarcodeResult]:
-        """Decode frame — thử tuần tự các variant preprocess, EARLY EXIT khi
-        variant nào ra kết quả (tránh burn CPU decode 5 lần khi variant 1 đã OK).
+        """Decode frame — CROP theo bounding box của zone TRƯỚC preprocess
+        + decode, sau đó offset toạ độ về hệ frame gốc.
 
-        Merge dedup theo (data, rect) để không double-count 1 barcode.
+        Vì sao crop: mã trong zone ~30% frame → crop tăng 3x kích thước
+        tương đối, giúp decoder đọc dễ hơn + giảm 3-9x CPU cost.
+
+        Thử tuần tự các variant preprocess, EARLY EXIT khi ra kết quả.
         """
-        # Resize xuống để giảm CPU nếu quá to.
-        frame = resize_if_large(frame, max_width=1280)
-        variants = preprocess_pipeline(frame)
-        merged: dict = {}  # data -> BarcodeResult (giữ result đầu tiên)
+        H, W = frame.shape[:2]
+        # Tính bounding rect của zone polygon (pixel trong hệ frame gốc).
+        zone_poly = self._compute_zone_polygon_px(W, H)
+        if zone_poly:
+            xs = [p[0] for p in zone_poly]
+            ys = [p[1] for p in zone_poly]
+            zx1 = max(0, min(xs) - 20)  # padding 20px cho barcode ở rìa
+            zy1 = max(0, min(ys) - 20)
+            zx2 = min(W, max(xs) + 20)
+            zy2 = min(H, max(ys) + 20)
+            if zx2 - zx1 < 50 or zy2 - zy1 < 50:  # zone quá nhỏ -> fallback full
+                zx1, zy1, zx2, zy2 = 0, 0, W, H
+        else:
+            zx1, zy1, zx2, zy2 = 0, 0, W, H
+        crop = frame[zy1:zy2, zx1:zx2]
+        # Resize crop nếu vẫn còn lớn.
+        crop = resize_if_large(crop, max_width=1280)
+        scale = crop.shape[1] / max(1, zx2 - zx1)  # tỉ lệ resize crop
+        variants = preprocess_pipeline(crop)
+        merged: dict = {}
         for _name, gray in variants:
             found = self._decode_variant(gray)
             for r in found:
                 if r.data and r.data not in merged:
+                    # Offset toạ độ crop -> frame gốc.
+                    rx, ry, rw, rh = r.rect
+                    r.rect = (
+                        int(rx / scale) + zx1,
+                        int(ry / scale) + zy1,
+                        int(rw / scale),
+                        int(rh / scale),
+                    )
+                    if r.polygon:
+                        r.polygon = [
+                            (int(px / scale) + zx1, int(py / scale) + zy1)
+                            for (px, py) in r.polygon
+                        ]
                     merged[r.data] = r
             if merged:
-                # Đã có ít nhất 1 mã -> đủ cho frame này, không cần thử variant sau.
                 break
         return list(merged.values())
 
@@ -259,29 +324,46 @@ class CameraScanner:
         x, y = min(xs), min(ys)
         return (x, y, max(xs) - x, max(ys) - y)
 
-    def _compute_zone(self, frame_w: int, frame_h: int) -> tuple:
-        """Reading zone (x, y, w, h) trong pixel. Ưu tiên zone_rect (custom
-        4 slider), fallback zone_ratio (auto center)."""
+    def _compute_zone_rect(self, frame_w: int, frame_h: int) -> tuple:
+        """Zone RECT dạng (x, y, w, h) pixel. Dùng cho vẽ overlay khi
+        không có polygon."""
         if self.zone_rect:
             xp, yp, wp, hp = self.zone_rect
-            x = int(frame_w * xp / 100)
-            y = int(frame_h * yp / 100)
-            w = int(frame_w * wp / 100)
-            h = int(frame_h * hp / 100)
-            return (x, y, w, h)
+            return (int(frame_w * xp / 100), int(frame_h * yp / 100),
+                    int(frame_w * wp / 100), int(frame_h * hp / 100))
         r = self.zone_ratio
         w = int(frame_w * r)
         h = int(frame_h * r)
-        x = (frame_w - w) // 2
-        y = (frame_h - h) // 2
-        return (x, y, w, h)
+        return ((frame_w - w) // 2, (frame_h - h) // 2, w, h)
+
+    def _compute_zone_polygon_px(self, frame_w: int, frame_h: int) -> list:
+        """Zone POLYGON dạng list điểm pixel. Dùng cho vẽ + hit-test.
+
+        Nếu zone_polygon set (>= 3 điểm) -> convert percent → pixel.
+        Nếu không -> convert rect thành 4 điểm.
+        """
+        if self.zone_polygon:
+            return [(int(x * frame_w / 100), int(y * frame_h / 100))
+                    for x, y in self.zone_polygon]
+        x, y, w, h = self._compute_zone_rect(frame_w, frame_h)
+        return [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
 
     @staticmethod
-    def _rect_intersects_zone(rect: tuple, zone: tuple) -> bool:
-        """True nếu bounding box của barcode GIAO với reading zone."""
+    def _barcode_in_zone(rect: tuple, zone_polygon_px: list) -> bool:
+        """True nếu CENTER của bounding box barcode nằm trong zone polygon.
+
+        Dùng center check thay vì intersect vì polygon phức tạp — center
+        stable hơn khi barcode ở rìa.
+        """
         rx, ry, rw, rh = rect
-        zx, zy, zw, zh = zone
-        return not (rx + rw < zx or rx > zx + zw or ry + rh < zy or ry > zy + zh)
+        cx = rx + rw // 2
+        cy = ry + rh // 2
+        try:
+            pts = np.array(zone_polygon_px, dtype=np.int32).reshape((-1, 1, 2))
+            dist = cv2.pointPolygonTest(pts, (float(cx), float(cy)), False)
+            return dist >= 0  # >= 0 = inside hoặc trên biên
+        except Exception:
+            return True  # Nếu lỗi thì chấp nhận (an toàn)
 
     # -------------- Public API cho UI --------------
     def get_annotated_frame(self):
@@ -292,11 +374,13 @@ class CameraScanner:
         if frame is None:
             return None
         h, w = frame.shape[:2]
-        zone = self._compute_zone(w, h)
-        # Draw reading zone (dashed rectangle)
-        self._draw_dashed_rect(frame, zone, color=(255, 200, 0), thickness=2)
-        cv2.putText(frame, "READING ZONE", (zone[0], zone[1] - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 0), 1, cv2.LINE_AA)
+        zone_poly = self._compute_zone_polygon_px(w, h)
+        # Draw reading zone (polygon, có thể là hình bất kỳ tự do).
+        self._draw_dashed_polygon(frame, zone_poly, color=(255, 200, 0), thickness=2)
+        if zone_poly:
+            zx, zy = zone_poly[0]
+            cv2.putText(frame, "READING ZONE", (zx, max(zy - 8, 12)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 0), 1, cv2.LINE_AA)
         # Draw each barcode
         for r in results:
             color = (0, 220, 0) if r.in_zone else (120, 120, 120)
@@ -312,6 +396,31 @@ class CameraScanner:
             cv2.putText(frame, label, (x, max(15, y - 6)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
         return frame
+
+    @staticmethod
+    def _draw_dashed_polygon(img, polygon: list, color, thickness=2, dash=10):
+        """Vẽ polygon closed với cạnh dashed. polygon = [(x,y), ...]."""
+        if not polygon or len(polygon) < 2:
+            return
+        n = len(polygon)
+        for i in range(n):
+            x1, y1 = polygon[i]
+            x2, y2 = polygon[(i + 1) % n]
+            # Chia đoạn thành các dash nhỏ.
+            import math
+            dx, dy = x2 - x1, y2 - y1
+            dist = math.sqrt(dx * dx + dy * dy)
+            if dist < 1:
+                continue
+            steps = max(1, int(dist / dash))
+            for s in range(0, steps, 2):  # vẽ mỗi 2 step 1 lần (dashed)
+                t1 = s / steps
+                t2 = min(1.0, (s + 1) / steps)
+                px1 = int(x1 + dx * t1)
+                py1 = int(y1 + dy * t1)
+                px2 = int(x1 + dx * t2)
+                py2 = int(y1 + dy * t2)
+                cv2.line(img, (px1, py1), (px2, py2), color, thickness)
 
     @staticmethod
     def _draw_dashed_rect(img, rect, color, thickness=2, dash=10):

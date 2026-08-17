@@ -52,6 +52,12 @@ try:
 except Exception:
     pass  # Không có pyzbar cũng OK (camera fallback không có sẽ tự skip).
 
+# --- Bundle zxing-cpp (native .pyd; wheel Windows đã embed sẵn) ---
+try:
+    _tk_bins += collect_dynamic_libs("zxingcpp")
+except Exception:
+    pass
+
 # --- Bundle opencv (cv2 tự lo, nhưng đề phòng missing hook) ---
 try:
     _tk_datas += collect_data_files("cv2", include_py_files=False)
@@ -71,7 +77,8 @@ a = Analysis(
     hiddenimports=[
         'pystray._win32', 'PIL._tkinter_finder', 'tkinter', 'tkinter.ttk', '_tkinter',
         # Camera scanner (optional, không crash nếu thiếu vì đã try/except trong code)
-        'cv2', 'numpy', 'pyzbar', 'pyzbar.pyzbar', 'camera_scanner',
+        'cv2', 'numpy', 'pyzbar', 'pyzbar.pyzbar', 'zxingcpp', 'camera_scanner',
+        'camera_preprocess',
     ],
     hookspath=[],
     hooksconfig={},
