@@ -1431,8 +1431,26 @@ class AgentWindow:
     # --- Settings dialog ---
     def _open_settings(self):
         """Dialog chọn nguồn scan + cấu hình camera. Save vào config.ini +
-        restart camera live không cần đóng agent."""
+        restart camera live không cần đóng agent.
+
+        LƯU Ý: TẠM STOP camera scanner đang chạy khi mở dialog. Vì preview
+        trong dialog cũng mở RTSP session tới cùng camera Hikvision — nếu để
+        song song sẽ ăn 2 concurrent stream slot, có thể vượt limit camera
+        (thường 3-6) và làm scanner mất kết nối. Sau khi đóng: nếu Save ->
+        restart_camera đã handle, nếu Cancel -> gọi start_camera_current."""
         from tkinter import messagebox
+        # Stop camera scanner đang chạy để nhường session cho preview.
+        _stop_cam = self.state.get("stop_camera")
+        if _stop_cam:
+            try:
+                _stop_cam()
+                # Cập nhật UI panel để không tick decode frame stale.
+                try:
+                    self._apply_camera_panel_visibility()
+                except Exception:
+                    pass
+            except Exception:
+                pass
         dlg = tk.Toplevel(self.root)
         dlg.title("Cài đặt nguồn quét")
         dlg.configure(bg=self.PANEL)
@@ -1995,6 +2013,10 @@ class AgentWindow:
         preview.bind("<ButtonPress-1>", _on_click)
         preview.bind("<Double-Button-1>", _on_double_click)
 
+        # Flag: user đã Save chưa. Nếu chưa (=Cancel/X) thì cleanup phải
+        # restart camera scanner cũ vì lúc mở dialog đã stop_camera.
+        saved_flag = {"saved": False}
+
         # Cleanup khi đóng dialog
         _orig_destroy = dlg.destroy
         def _cleanup_destroy():
@@ -2008,6 +2030,19 @@ class AgentWindow:
                 _unbind_wheel()
             except Exception:
                 pass
+            # Nếu user KHÔNG save (Cancel / X / Escape) -> restart camera cũ
+            # (đã stop khi mở dialog). Save flow đã tự gọi restart_camera.
+            if not saved_flag["saved"]:
+                _start_cur = self.state.get("start_camera_current")
+                if _start_cur:
+                    try:
+                        _start_cur()
+                        try:
+                            self._apply_camera_panel_visibility()
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
             _orig_destroy()
         dlg.destroy = _cleanup_destroy
         dlg.protocol("WM_DELETE_WINDOW", _cleanup_destroy)
@@ -2039,6 +2074,7 @@ class AgentWindow:
                     "camera_zone_h": 0,
                 }
                 save_config_partial(updates)
+                saved_flag["saved"] = True  # để cleanup KHÔNG restart camera cũ nữa
                 # Update cfg trong window để _apply_camera_panel_visibility đọc đúng
                 self.cfg["input_source"] = new_src
                 self.cfg["camera_source"] = new_cam
@@ -2592,7 +2628,27 @@ def main():
         # Restart / stop keyboard listener theo source
         return state["camera"]
 
+    def stop_camera():
+        """Tạm stop camera scanner — dùng khi mở Settings để tránh tranh
+        RTSP session với preview trong dialog (Hikvision limit 3-6 stream)."""
+        cam = state.get("camera")
+        if cam:
+            try:
+                cam.stop()
+            except Exception:
+                pass
+            state["camera"] = None
+
+    def start_camera_current():
+        """Start lại camera với config hiện tại (không reload từ file).
+        Dùng khi user Cancel Settings — restore camera scanner đã stop."""
+        if state.get("camera") is None:
+            state["camera"] = _start_camera(cfg)
+        return state["camera"]
+
     state["restart_camera"] = restart_camera
+    state["stop_camera"] = stop_camera
+    state["start_camera_current"] = start_camera_current
     state["camera"] = _start_camera(cfg)
 
     # Chạy nền: gửi lại mã offline.
