@@ -1378,6 +1378,18 @@ class AgentWindow:
         y = max(20, (screen_h - dlg_h) // 2 - 40)
         dlg.geometry(f"+{max(x, 20)}+{max(y, 20)}")
 
+        # --- Nút Lưu/Huỷ LOCK Ở ĐÁY DIALOG (pack TRƯỚC content để side="bottom"
+        # reserve chỗ đầu tiên -> dù content cao đến đâu vẫn không đè lên nút).
+        btns = tk.Frame(dlg, bg=self.PANEL)
+        btns.pack(side="bottom", fill="x", padx=14, pady=(6, 12))
+        btn_save = tk.Button(btns, text="💾 Lưu & Áp dụng",
+                             bg="#4f46e5", fg="white", relief="flat",
+                             font=("Segoe UI", 10, "bold"), padx=14, pady=6)
+        btn_save.pack(side="right")
+        tk.Button(btns, text="Huỷ", command=dlg.destroy,
+                  bg="#334155", fg="#e2e8f0", relief="flat",
+                  font=("Segoe UI", 10), padx=14, pady=6).pack(side="right", padx=(0, 6))
+
         tk.Label(dlg, text="⚙ Cài đặt nguồn quét mã",
                  fg="#a5b4fc", bg=self.PANEL, font=("Segoe UI", 13, "bold")
                  ).pack(anchor="w", padx=16, pady=(14, 8))
@@ -1825,10 +1837,7 @@ class AgentWindow:
         # Start preview polling
         _tick_preview()
 
-        # --- Buttons ---
-        btns = tk.Frame(dlg, bg=self.PANEL)
-        btns.pack(side="bottom", fill="x", padx=14, pady=(6, 12))
-
+        # --- Wire command cho nút Save (nút đã pack ở đầu function). ---
         def save_and_apply():
             try:
                 new_src = src_var.get()
@@ -1872,12 +1881,7 @@ class AgentWindow:
             except Exception as ex:
                 messagebox.showerror("Lỗi", str(ex))
 
-        tk.Button(btns, text="Huỷ", command=dlg.destroy,
-                  bg="#334155", fg="#e2e8f0", relief="flat",
-                  font=("Segoe UI", 10), padx=14, pady=5).pack(side="right", padx=(6, 0))
-        tk.Button(btns, text="💾 Lưu & Áp dụng", command=save_and_apply,
-                  bg="#4f46e5", fg="white", relief="flat",
-                  font=("Segoe UI", 10, "bold"), padx=14, pady=5).pack(side="right")
+        btn_save.config(command=save_and_apply)
 
     # --- Cập nhật ---
     def _check_update_now(self, silent_if_no_update: bool = False):
