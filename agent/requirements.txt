@@ -2,9 +2,3 @@ pynput==1.7.7
 pystray==0.19.5
 Pillow==10.4.0
 requests==2.32.3
-# Camera barcode scanner (tuỳ chọn, dùng khi input.source = camera/both)
-opencv-python==4.10.0.84
-pyzbar==0.1.9
-numpy==2.1.3
-# Decoder backup — mạnh trên ảnh mờ / nghiêng / xa (băng chuyền).
-zxing-cpp==2.2.0
