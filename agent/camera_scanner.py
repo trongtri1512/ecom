@@ -54,6 +54,67 @@ except ImportError:
         resize_if_large = lambda f, **kw: f
 
 
+import re as _re
+
+# Pattern nhận diện mã vận đơn phổ biến VN (SPX/GHN/J&T/Best/GHTK/VNPost).
+# Ưu tiên các mã có prefix rõ ràng.
+_TRACKING_PATTERNS = [
+    _re.compile(r"\b(SPX?VN\d{10,16})\b", _re.IGNORECASE),  # SPX / SPXVN
+    _re.compile(r"\b(PXVN\d{10,16})\b", _re.IGNORECASE),    # SPX alt
+    _re.compile(r"\b(SPE[A-Z0-9]{8,16})\b", _re.IGNORECASE), # SPE
+    _re.compile(r"\b(JT\d{10,16})\b", _re.IGNORECASE),      # J&T
+    _re.compile(r"\b(GHN[A-Z0-9]{8,16})\b", _re.IGNORECASE),
+    _re.compile(r"\b(BE[A-Z0-9]{8,16})\b", _re.IGNORECASE), # Best
+    _re.compile(r"\b(S[A-Z0-9]{8,16})\b"),                   # GHTK / generic
+    _re.compile(r"\b([A-Z]{2,6}\d{8,16})\b"),                # generic 2-6 chữ + số
+    _re.compile(r"\b(\d{12,20})\b"),                          # số dài (VNPost, ...)
+]
+
+
+def _extract_tracking_code(raw: str) -> str:
+    """Extract mã vận đơn từ raw QR/barcode content.
+
+    Trường hợp:
+      1. Raw đã là mã (SPXVN...) -> trả nguyên.
+      2. Raw là URL (VD Shopee QR: https://spx.vn/...) -> lấy segment cuối
+         path / query param có vẻ như mã.
+      3. Raw là JSON hoặc chuỗi hỗn hợp -> match regex tracking pattern.
+      4. Không match gì -> trả raw (để user còn thấy có scan được nhưng cần fix).
+    """
+    if not raw:
+        return ""
+    s = raw.strip()
+    # Case 2: URL — thử extract từ path + query trước.
+    if s.startswith(("http://", "https://")):
+        # Lấy phần sau '?' + phần cuối path
+        try:
+            from urllib.parse import urlparse, parse_qs
+            u = urlparse(s)
+            # Check query params trước (VD ?trackingno=SPXVN...)
+            qs = parse_qs(u.query)
+            for _k, vals in qs.items():
+                for v in vals:
+                    for pat in _TRACKING_PATTERNS:
+                        m = pat.search(v)
+                        if m:
+                            return m.group(1).upper()
+            # Check path segments
+            for seg in u.path.split("/"):
+                for pat in _TRACKING_PATTERNS:
+                    m = pat.search(seg)
+                    if m:
+                        return m.group(1).upper()
+        except Exception:
+            pass
+    # Case 3+4: match regex trên toàn raw.
+    for pat in _TRACKING_PATTERNS:
+        m = pat.search(s)
+        if m:
+            return m.group(1).upper()
+    # Không match -> trả raw (backend/carriers.py sẽ classify Other).
+    return s
+
+
 @dataclass
 class BarcodeResult:
     """1 barcode phát hiện được trong 1 frame."""
@@ -185,9 +246,13 @@ class CameraScanner:
                     if len(self._recent) > 500:
                         cutoff = now - self.dedup_seconds * 5
                         self._recent = {k: v for k, v in self._recent.items() if v > cutoff}
+                    # Extract mã vận đơn từ QR content (có thể là URL/JSON).
+                    extracted = _extract_tracking_code(r.data)
+                    if not extracted:
+                        continue
                     if self.on_scan:
                         try:
-                            self.on_scan(r.data)
+                            self.on_scan(extracted)
                         except Exception as e:
                             print(f"[camera] on_scan callback error: {e}")
             # Sleep để không burn CPU
@@ -197,15 +262,18 @@ class CameraScanner:
 
     # -------------- Decode logic --------------
     def _decode_variant(self, gray_frame) -> list[BarcodeResult]:
-        """Decode 1 variant (đã preprocess sang grayscale)."""
+        """Decode 1 variant. Chạy CẢ 3 decoder song song (không early-exit)
+        để maximize recall — QR nhỏ + Code128 đôi khi mỗi decoder detect 1 loại."""
         results: list[BarcodeResult] = []
-        # 1. OpenCV BarcodeDetector (nhanh, C++ backend)
+        seen: set = set()  # dedup theo data trong cùng variant
+
+        # 1. OpenCV BarcodeDetector (nhanh, tốt với 1D)
         if self._has_cv_detector:
             try:
                 ret, decoded, types, points = self._cv_detector.detectAndDecodeWithType(gray_frame)
                 if ret and decoded is not None:
                     for i, code in enumerate(decoded):
-                        if not code:
+                        if not code or code in seen:
                             continue
                         pts = points[i] if points is not None and i < len(points) else []
                         polygon = [(int(x), int(y)) for x, y in pts] if len(pts) > 0 else []
@@ -215,15 +283,16 @@ class CameraScanner:
                             data=code, barcode_type=btype,
                             polygon=polygon, rect=rect,
                         ))
+                        seen.add(code)
             except Exception:
                 pass
-        # 2. pyzbar
-        if not results and HAS_PYZBAR:
+        # 2. pyzbar (mạnh với QR + Code128, ảnh nét)
+        if HAS_PYZBAR:
             try:
                 decoded = _pyzbar_decode(gray_frame)
                 for obj in decoded:
                     code = obj.data.decode("utf-8", errors="ignore")
-                    if not code:
+                    if not code or code in seen:
                         continue
                     polygon = [(p.x, p.y) for p in obj.polygon]
                     rect = (obj.rect.left, obj.rect.top, obj.rect.width, obj.rect.height)
@@ -231,16 +300,16 @@ class CameraScanner:
                         data=code, barcode_type=obj.type,
                         polygon=polygon, rect=rect,
                     ))
+                    seen.add(code)
             except Exception as e:
                 print(f"[camera] pyzbar error: {e}")
-        # 3. ZXing-cpp fallback (mạnh trên ảnh mờ/nghiêng — dùng khi pyzbar
-        #    và CV BarcodeDetector đều fail)
-        if not results and HAS_ZXING:
+        # 3. ZXing-cpp (mạnh với QR nhỏ / mờ / nghiêng — case nhãn SPX/GHN)
+        if HAS_ZXING:
             try:
                 zresults = _zxingcpp.read_barcodes(gray_frame)
                 for zr in zresults:
                     code = getattr(zr, "text", "") or ""
-                    if not code:
+                    if not code or code in seen:
                         continue
                     btype = str(getattr(zr, "format", "")) or ""
                     polygon = []
@@ -260,18 +329,19 @@ class CameraScanner:
                         data=code, barcode_type=btype,
                         polygon=polygon, rect=rect,
                     ))
+                    seen.add(code)
             except Exception as e:
                 print(f"[camera] zxing error: {e}")
         return results
 
     def _decode_frame(self, frame: "np.ndarray") -> list[BarcodeResult]:
-        """Decode frame — CROP theo bounding box của zone TRƯỚC preprocess
-        + decode, sau đó offset toạ độ về hệ frame gốc.
+        """Decode frame — CROP zone → UPSCALE nếu nhỏ → preprocess → decode
+        trên MỌI variant (không early-exit) để maximize recall.
 
-        Vì sao crop: mã trong zone ~30% frame → crop tăng 3x kích thước
-        tương đối, giúp decoder đọc dễ hơn + giảm 3-9x CPU cost.
-
-        Thử tuần tự các variant preprocess, EARLY EXIT khi ra kết quả.
+        - Crop trước decode: barcode chiếm ti trong lớn hơn trong ảnh input.
+        - Upscale 2x nếu crop < 800px: barcode nhỏ (VD QR trên nhãn SPX chỉ
+          ~50-80px) → cần upscale để pyzbar/zxing có đủ pixel/module để decode.
+        - Chạy pyzbar/zxing/CV song song, mọi variant: recall > CPU.
         """
         H, W = frame.shape[:2]
         # Tính bounding rect của zone polygon (pixel trong hệ frame gốc).
@@ -279,25 +349,33 @@ class CameraScanner:
         if zone_poly:
             xs = [p[0] for p in zone_poly]
             ys = [p[1] for p in zone_poly]
-            zx1 = max(0, min(xs) - 20)  # padding 20px cho barcode ở rìa
+            zx1 = max(0, min(xs) - 20)
             zy1 = max(0, min(ys) - 20)
             zx2 = min(W, max(xs) + 20)
             zy2 = min(H, max(ys) + 20)
-            if zx2 - zx1 < 50 or zy2 - zy1 < 50:  # zone quá nhỏ -> fallback full
+            if zx2 - zx1 < 50 or zy2 - zy1 < 50:
                 zx1, zy1, zx2, zy2 = 0, 0, W, H
         else:
             zx1, zy1, zx2, zy2 = 0, 0, W, H
         crop = frame[zy1:zy2, zx1:zx2]
-        # Resize crop nếu vẫn còn lớn.
-        crop = resize_if_large(crop, max_width=1280)
-        scale = crop.shape[1] / max(1, zx2 - zx1)  # tỉ lệ resize crop
+        crop_w0 = zx2 - zx1
+
+        # UPSCALE 2x nếu crop < 800px (mã nhỏ cần thêm pixel/module).
+        # Dùng INTER_CUBIC — chậm hơn linear nhưng giữ được vạch barcode.
+        if crop.shape[1] < 800 and crop.shape[1] > 0:
+            new_w = min(1600, crop.shape[1] * 2)
+            new_h = int(crop.shape[0] * (new_w / crop.shape[1]))
+            crop = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+        # Nếu vẫn > 1600 thì resize xuống 1600 để giới hạn CPU.
+        crop = resize_if_large(crop, max_width=1600)
+        scale = crop.shape[1] / max(1, crop_w0)  # tỉ lệ crop -> frame gốc
         variants = preprocess_pipeline(crop)
         merged: dict = {}
+        # KHÔNG early-exit — chạy hết variants để bắt cả 1D lẫn QR.
         for _name, gray in variants:
             found = self._decode_variant(gray)
             for r in found:
                 if r.data and r.data not in merged:
-                    # Offset toạ độ crop -> frame gốc.
                     rx, ry, rw, rh = r.rect
                     r.rect = (
                         int(rx / scale) + zx1,
@@ -311,8 +389,6 @@ class CameraScanner:
                             for (px, py) in r.polygon
                         ]
                     merged[r.data] = r
-            if merged:
-                break
         return list(merged.values())
 
     @staticmethod
