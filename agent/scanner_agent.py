@@ -1621,14 +1621,25 @@ class AgentWindow:
             return custom_url_var.get().strip() or "0"
 
         def _open_preview_cap(src):
-            """Mở VideoCapture riêng cho preview (không đụng scanner đang chạy)."""
+            """Mở VideoCapture riêng cho preview (không đụng scanner đang chạy).
+
+            LƯU Ý: VideoCapture(rtsp_url) có thể BLOCK 5-30 giây nếu network
+            chậm. Được gọi từ thread NỀN (_open_cap_async), không phải main.
+            """
             try:
                 import cv2 as _cv2
+            except ImportError:
+                print("[preview] opencv-python chưa cài -> skip preview")
+                return None
+            try:
                 try:
                     src_int = int(src)
                     backend = _cv2.CAP_DSHOW if hasattr(_cv2, "CAP_DSHOW") else 0
                     cap = _cv2.VideoCapture(src_int, backend)
                 except ValueError:
+                    # RTSP - ép TCP transport để tránh UDP packet loss cao trên WiFi
+                    import os as _os
+                    _os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
                     cap = _cv2.VideoCapture(src)
                 if not cap.isOpened():
                     cap.release()
@@ -1637,6 +1648,17 @@ class AgentWindow:
             except Exception as ex:
                 print(f"[preview] open error: {ex}")
                 return None
+
+        def _open_cap_async(src, on_done):
+            """Mở cap trong thread nền, callback về main thread khi xong."""
+            def worker():
+                cap = _open_preview_cap(src)
+                # Bounce về main thread
+                try:
+                    dlg.after(0, lambda: on_done(cap))
+                except Exception:
+                    pass
+            threading.Thread(target=worker, daemon=True).start()
 
         def _close_preview_cap():
             if preview_state["cap"]:
@@ -1671,44 +1693,69 @@ class AgentWindow:
                                  anchor="nw", fill="#fbbf24",
                                  font=("Segoe UI", 8, "bold"), tags="zone_label")
 
-        def _tick_preview():
-            """Poll frame từ camera → render lên canvas + overlay zone."""
-            src = _get_active_source()
-            # Nếu source đổi → reopen cap
-            if preview_state["last_source"] != src:
-                _close_preview_cap()
-                preview_state["last_source"] = src
-                preview_state["cap"] = _open_preview_cap(src)
-            cap = preview_state["cap"]
-            if cap is not None:
-                try:
-                    ret, frame = cap.read()
-                    if ret and frame is not None:
-                        import cv2 as _cv2
-                        frame = _cv2.resize(frame, (PREV_W, PREV_H))
-                        rgb = _cv2.cvtColor(frame, _cv2.COLOR_BGR2RGB)
-                        img = _PILImage.fromarray(rgb)
-                        preview_state["photo"] = ImageTk.PhotoImage(img)
-                        preview.delete("bg")
-                        preview.create_image(0, 0, image=preview_state["photo"],
-                                              anchor="nw", tags="bg")
-                    else:
-                        preview.delete("bg")
-                        preview.create_text(PREV_W // 2, PREV_H // 2,
-                                             text="Chưa đọc được frame\n(kiểm tra kết nối)",
-                                             fill="#94a3b8", font=("Segoe UI", 10),
-                                             justify="center", tags="bg")
-                except Exception as ex:
-                    print(f"[preview] read error: {ex}")
-            else:
+        def _show_status(text, color="#94a3b8"):
+            """Hiện text status giữa preview (khi chưa có frame hoặc lỗi)."""
+            try:
                 preview.delete("bg")
-                preview.create_text(PREV_W // 2, PREV_H // 2,
-                                     text=f"Không mở được camera\n{src[:60]}",
-                                     fill="#94a3b8", font=("Segoe UI", 10),
+                preview.create_text(PREV_W // 2, PREV_H // 2, text=text,
+                                     fill=color, font=("Segoe UI", 10),
                                      justify="center", tags="bg")
-            # Overlay zone LÊN TRÊN video (raise sau khi tạo image bg)
-            _draw_zone_overlay(PREV_W, PREV_H)
-            preview_state["after_id"] = dlg.after(200, _tick_preview)  # 5 fps preview
+            except Exception:
+                pass
+
+        def _tick_preview():
+            """Poll frame từ camera → render lên canvas + overlay zone.
+
+            Toàn bộ wrap try/except — bất kỳ exception nào cũng KHÔNG crash
+            mainloop. Open cap ở thread nền để không block UI khi RTSP chậm.
+            """
+            try:
+                src = _get_active_source()
+                # Nếu source đổi → reopen cap (async, không block main thread).
+                if preview_state["last_source"] != src:
+                    _close_preview_cap()
+                    preview_state["last_source"] = src
+                    preview_state["opening"] = True
+                    _show_status(f"⏳ Đang mở camera...\n{src[:60]}", "#fbbf24")
+
+                    def _on_opened(cap):
+                        preview_state["opening"] = False
+                        preview_state["cap"] = cap
+                        if cap is None:
+                            _show_status(f"✖ Không mở được camera\n{src[:60]}", "#ef4444")
+
+                    _open_cap_async(src, _on_opened)
+
+                if preview_state.get("opening"):
+                    # Đang mở, không thử read frame.
+                    _draw_zone_overlay(PREV_W, PREV_H)
+                    preview_state["after_id"] = dlg.after(300, _tick_preview)
+                    return
+
+                cap = preview_state["cap"]
+                if cap is not None:
+                    try:
+                        ret, frame = cap.read()
+                        if ret and frame is not None:
+                            import cv2 as _cv2
+                            frame = _cv2.resize(frame, (PREV_W, PREV_H))
+                            rgb = _cv2.cvtColor(frame, _cv2.COLOR_BGR2RGB)
+                            img = _PILImage.fromarray(rgb)
+                            preview_state["photo"] = ImageTk.PhotoImage(img)
+                            preview.delete("bg")
+                            preview.create_image(0, 0, image=preview_state["photo"],
+                                                  anchor="nw", tags="bg")
+                        else:
+                            _show_status("⚠ Chưa đọc được frame\n(check kết nối)")
+                    except Exception as ex:
+                        print(f"[preview] read error: {ex}")
+                        _show_status(f"✖ Lỗi đọc frame:\n{str(ex)[:60]}", "#ef4444")
+                # Overlay zone LÊN TRÊN video.
+                _draw_zone_overlay(PREV_W, PREV_H)
+            except Exception as ex:
+                import traceback
+                print(f"[preview] tick fatal: {ex}\n{traceback.format_exc()[-500:]}")
+            preview_state["after_id"] = dlg.after(200, _tick_preview)
 
         # Drag-to-draw handlers
         def _on_press(e):
