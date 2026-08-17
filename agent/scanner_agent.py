@@ -1368,11 +1368,14 @@ class AgentWindow:
         dlg.configure(bg=self.PANEL)
         dlg.transient(self.root)
         dlg.grab_set()
-        dlg.geometry("560x820")
-        dlg.resizable(False, True)
+        # Kích cỡ dialog: constrain theo màn hình để không tràn taskbar.
+        screen_h = dlg.winfo_screenheight()
+        dlg_h = min(720, screen_h - 100)   # để chừa 100px cho taskbar + title bar
+        dlg.geometry(f"580x{dlg_h}")
+        dlg.resizable(True, True)
         dlg.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 280
-        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 410
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 290
+        y = max(20, (screen_h - dlg_h) // 2 - 40)
         dlg.geometry(f"+{max(x, 20)}+{max(y, 20)}")
 
         tk.Label(dlg, text="⚙ Cài đặt nguồn quét mã",
@@ -1517,7 +1520,9 @@ class AgentWindow:
                     cap.release()
                     if ok:
                         self.root.after(0, lambda: test_status_lbl.config(
-                            text="✓ Kết nối OK", fg="#4ade80"))
+                            text="✓ Kết nối OK - đang tải preview...", fg="#4ade80"))
+                        # Tự reload preview với URL đã test OK.
+                        self.root.after(200, lambda: _reload_preview())
                     else:
                         self.root.after(0, lambda: test_status_lbl.config(
                             text="✖ Không kết nối được", fg="#ef4444"))
@@ -1575,8 +1580,8 @@ class AgentWindow:
         zone_state = {"x": _zx, "y": _zy, "w": _zw, "h": _zh,
                       "drag_start": None, "drag_end": None, "drawing": False}
 
-        # Canvas 480×270 (16:9) — hiển thị video preview + zone overlay.
-        PREV_W, PREV_H = 480, 270
+        # Canvas 400×225 (16:9 gọn) — hiển thị video preview + zone overlay.
+        PREV_W, PREV_H = 400, 225
         preview = tk.Canvas(prev_frame, width=PREV_W, height=PREV_H,
                             bg="#000", highlightthickness=1, highlightbackground="#334155",
                             cursor="crosshair")
@@ -1597,6 +1602,11 @@ class AgentWindow:
         tk.Button(info_row, text="↺ Reset zone", command=_reset_zone,
                   bg="#334155", fg="#e2e8f0", relief="flat",
                   font=("Segoe UI", 8), padx=8, pady=2).pack(side="right")
+        # Nút reload preview với source hiện tại (thay vì auto reload gây thrashing).
+        tk.Button(info_row, text="🔄 Xem preview",
+                  command=lambda: _reload_preview(),
+                  bg="#4f46e5", fg="white", relief="flat",
+                  font=("Segoe UI", 8, "bold"), padx=10, pady=2).pack(side="right", padx=(0, 6))
 
         tk.Label(prev_frame,
                  text="💡 Đặt kiện hàng vào frame → click và kéo chuột trên video để vẽ vùng quét.",
@@ -1703,29 +1713,32 @@ class AgentWindow:
             except Exception:
                 pass
 
+        def _reload_preview():
+            """User bấm nút này để reload preview với source mới nhất từ form.
+
+            Không tự auto reload khi gõ vì user gõ IP/password sẽ thrashing.
+            """
+            src = _get_active_source()
+            _close_preview_cap()
+            preview_state["last_source"] = src
+            preview_state["opening"] = True
+            _show_status(f"⏳ Đang kết nối camera...\n{src[:70]}", "#fbbf24")
+
+            def _on_opened(cap):
+                preview_state["opening"] = False
+                preview_state["cap"] = cap
+                if cap is None:
+                    _show_status(f"✖ Không mở được camera\n{src[:70]}", "#ef4444")
+
+            _open_cap_async(src, _on_opened)
+
         def _tick_preview():
             """Poll frame từ camera → render lên canvas + overlay zone.
 
-            Toàn bộ wrap try/except — bất kỳ exception nào cũng KHÔNG crash
-            mainloop. Open cap ở thread nền để không block UI khi RTSP chậm.
+            KHÔNG tự reload khi source đổi (thrashing khi gõ Entry). User
+            phải bấm nút "🔄 Xem preview" hoặc "Test kết nối" để reload.
             """
             try:
-                src = _get_active_source()
-                # Nếu source đổi → reopen cap (async, không block main thread).
-                if preview_state["last_source"] != src:
-                    _close_preview_cap()
-                    preview_state["last_source"] = src
-                    preview_state["opening"] = True
-                    _show_status(f"⏳ Đang mở camera...\n{src[:60]}", "#fbbf24")
-
-                    def _on_opened(cap):
-                        preview_state["opening"] = False
-                        preview_state["cap"] = cap
-                        if cap is None:
-                            _show_status(f"✖ Không mở được camera\n{src[:60]}", "#ef4444")
-
-                    _open_cap_async(src, _on_opened)
-
                 if preview_state.get("opening"):
                     # Đang mở, không thử read frame.
                     _draw_zone_overlay(PREV_W, PREV_H)
