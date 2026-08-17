@@ -1460,12 +1460,49 @@ class AgentWindow:
                   bg="#334155", fg="#e2e8f0", relief="flat",
                   font=("Segoe UI", 10), padx=14, pady=6).pack(side="right", padx=(0, 6))
 
-        tk.Label(dlg, text="⚙ Cài đặt nguồn quét mã",
+        # --- Vùng nội dung SCROLLABLE (Canvas + Scrollbar) ---
+        # Content dài (preview + polygon buttons + labels) có thể tràn màn hình
+        # nhỏ -> bọc vào Canvas để cuộn dọc bằng chuột giữa hoặc scrollbar.
+        scroll_wrap = tk.Frame(dlg, bg=self.PANEL)
+        scroll_wrap.pack(side="top", fill="both", expand=True)
+        scroll_canvas = tk.Canvas(scroll_wrap, bg=self.PANEL,
+                                    highlightthickness=0, bd=0)
+        scroll_canvas.pack(side="left", fill="both", expand=True)
+        scroll_bar = tk.Scrollbar(scroll_wrap, orient="vertical",
+                                    command=scroll_canvas.yview)
+        scroll_bar.pack(side="right", fill="y")
+        scroll_canvas.configure(yscrollcommand=scroll_bar.set)
+        # content = inner frame, tất cả widget con pack vào đây thay vì dlg.
+        content = tk.Frame(scroll_canvas, bg=self.PANEL)
+        content_id = scroll_canvas.create_window((0, 0), window=content, anchor="nw")
+
+        def _on_content_configure(_e=None):
+            scroll_canvas.configure(scrollregion=scroll_canvas.bbox("all"))
+        def _on_canvas_configure(e):
+            # Cho content width bằng canvas width để nội dung không bị cắt ngang.
+            scroll_canvas.itemconfig(content_id, width=e.width)
+        content.bind("<Configure>", _on_content_configure)
+        scroll_canvas.bind("<Configure>", _on_canvas_configure)
+
+        # Wheel scroll (Windows/Linux)
+        def _on_mousewheel(e):
+            try:
+                scroll_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+            except Exception:
+                pass
+        def _bind_wheel(_e=None):
+            scroll_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        def _unbind_wheel(_e=None):
+            scroll_canvas.unbind_all("<MouseWheel>")
+        dlg.bind("<Enter>", _bind_wheel)
+        dlg.bind("<Leave>", _unbind_wheel)
+
+        tk.Label(content, text="⚙ Cài đặt nguồn quét mã",
                  fg="#a5b4fc", bg=self.PANEL, font=("Segoe UI", 13, "bold")
                  ).pack(anchor="w", padx=16, pady=(14, 8))
 
         # --- Nguồn scan ---
-        src_frame = tk.LabelFrame(dlg, text=" Nguồn nhận mã ",
+        src_frame = tk.LabelFrame(content, text=" Nguồn nhận mã ",
                                    fg="#e2e8f0", bg=self.PANEL,
                                    font=("Segoe UI", 10, "bold"), bd=1, relief="solid")
         src_frame.pack(fill="x", padx=16, pady=(0, 10))
@@ -1482,7 +1519,7 @@ class AgentWindow:
                            ).pack(anchor="w", padx=10, pady=2, fill="x")
 
         # --- Camera source ---
-        cam_frame = tk.LabelFrame(dlg, text=" Camera source (khi bật camera) ",
+        cam_frame = tk.LabelFrame(content, text=" Camera source (khi bật camera) ",
                                    fg="#e2e8f0", bg=self.PANEL,
                                    font=("Segoe UI", 10, "bold"), bd=1, relief="solid")
         cam_frame.pack(fill="x", padx=16, pady=(0, 10))
@@ -1649,7 +1686,7 @@ class AgentWindow:
         _switch_form()  # init view
 
         # --- Preview live + drag-to-draw reading zone ---
-        prev_frame = tk.LabelFrame(dlg, text=" Kẻ vùng quét (click + kéo chuột trên preview) ",
+        prev_frame = tk.LabelFrame(content, text=" Vùng quét — polygon tự do (click từng điểm) ",
                                     fg="#e2e8f0", bg=self.PANEL,
                                     font=("Segoe UI", 10, "bold"), bd=1, relief="solid")
         prev_frame.pack(fill="x", padx=16, pady=(0, 10))
@@ -1967,6 +2004,10 @@ class AgentWindow:
                 except Exception:
                     pass
             _close_preview_cap()
+            try:
+                _unbind_wheel()
+            except Exception:
+                pass
             _orig_destroy()
         dlg.destroy = _cleanup_destroy
         dlg.protocol("WM_DELETE_WINDOW", _cleanup_destroy)
