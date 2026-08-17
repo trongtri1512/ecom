@@ -950,18 +950,11 @@ class AgentWindow:
         sb.pack(side="right", fill="y")
         self.listbox.config(yscrollcommand=sb.set)
 
-        # ---- Camera preview (dưới listbox, chỉ hiện khi source = camera/both) ----
-        cam_source = cfg.get("input_source", "barcode")
-        if cam_source in ("camera", "both") and state.get("camera") is not None:
-            tk.Label(left, text="📷 CAMERA", fg="#94a3b8", bg=self.BG,
-                     font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(8, 4))
-            self.camera_label = tk.Label(left, bg="#000", width=320, height=240)
-            self.camera_label.pack(fill="both", expand=False)
-            # Poll camera frame → render
-            self._camera_after_id = None
-            self._start_camera_render()
-        else:
-            self.camera_label = None
+        # Camera preview đã chuyển sang cột PHẢI (dưới notebook), xem
+        # `right_camera_wrap` phía dưới. self.camera_label giữ alias để
+        # _start_camera_render dùng.
+        self.camera_label = None  # sẽ trỏ tới right_camera_label sau khi setup
+        self._camera_after_id = None
 
         # PHẢI: thống kê theo ĐVVC trong ngày
         right = tk.Frame(body, bg=self.BG)
@@ -1028,19 +1021,30 @@ class AgentWindow:
             font=("Segoe UI", 11, "bold"), padx=16, pady=8)
         self.btn_close_basket.pack(side="right")
 
-        # ---- CỘT PHẢI: 2 tab-button toggle + Treeview + nút "Kết thúc ngày" gọn ----
+        # ---- CỘT PHẢI: header + tabs + camera preview (dynamic) + nút "Kết thúc ngày" ----
         far_right = tk.Frame(body, bg=self.BG)
         far_right.grid(row=0, column=2, sticky="nsew", padx=(10, 0))
         tk.Label(far_right, text="BÀN GIAO & SỌT", fg="#94a3b8", bg=self.BG,
                  font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 4))
 
         # Đáy cột: nút "Kết thúc ngày" gọn, align PHẢI (không full-width).
+        # LƯU Ý: pack side="bottom" TRƯỚC content khác để lock chỗ đáy col.
         eos_wrap = tk.Frame(far_right, bg=self.BG)
         eos_wrap.pack(side="bottom", fill="x", pady=(8, 0))
         tk.Button(eos_wrap, text="🌙 Kết thúc ngày",
                   command=self._close_basket_end_of_shift,
                   bg="#334155", fg="#cbd5e1", relief="flat",
                   font=("Segoe UI", 9), padx=12, pady=5).pack(side="right")
+
+        # Camera preview panel (side="bottom" nữa để nằm TRÊN nút "Kết thúc ngày"
+        # và DƯỚI notebook). Show/hide theo input_source.
+        self.right_camera_wrap = tk.Frame(far_right, bg=self.BG)
+        # Không pack ngay — pack có điều kiện sau khi biết source.
+        self.right_camera_label = tk.Label(
+            self.right_camera_wrap, bg="#000",
+            text="", fg="#94a3b8", font=("Segoe UI", 9)
+        )
+        self.right_camera_label.pack(fill="both", expand=True)
 
         # Tab-button toggle (2 nút "Sọt hôm nay" / "Mã phiên OPS")
         tabbar = tk.Frame(far_right, bg=self.BG)
@@ -1105,6 +1109,9 @@ class AgentWindow:
                                       text="  (chưa có sọt nào — bấm 'Hoàn thành sọt' để chốt sọt đầu tiên)",
                                       fg="#64748b", bg=self.PANEL, font=("Segoe UI", 9, "italic"))
         self.baskets_empty.pack(anchor="w", padx=12, pady=12)
+
+        # Setup camera panel (show/hide theo input_source)
+        self._apply_camera_panel_visibility()
 
         # ---- Nút điều khiển ----
         btns = tk.Frame(self.root, bg=self.BG)
@@ -1357,6 +1364,39 @@ class AgentWindow:
                     print(f"[ui] camera render error: {e}")
             self._camera_after_id = self.root.after(100, tick)
         tick()
+
+    def _apply_camera_panel_visibility(self):
+        """Show/hide camera preview panel trong cột phải dựa vào input_source.
+
+        Gọi lúc init AgentWindow + sau khi restart_camera (từ Settings dialog).
+        - source in (camera, both) + camera scanner mở OK -> pack panel + start render.
+        - source = barcode hoặc camera fail -> pack_forget + stop render.
+        """
+        src = self.cfg.get("input_source", "barcode")
+        cam = self.state.get("camera")
+
+        # Stop render loop nếu đang chạy
+        if self._camera_after_id:
+            try:
+                self.root.after_cancel(self._camera_after_id)
+            except Exception:
+                pass
+            self._camera_after_id = None
+
+        if src in ("camera", "both") and cam is not None:
+            # Show panel + start render.
+            # Kích thước fix: 340x220 cho gọn cột phải.
+            self.right_camera_label.config(width=340, height=220)
+            if not self.right_camera_wrap.winfo_ismapped():
+                # pack side="bottom" để nằm TRÊN eos_wrap (đáy) và DƯỚI notebook.
+                self.right_camera_wrap.pack(side="bottom", fill="x", pady=(6, 0))
+            self.camera_label = self.right_camera_label
+            self._start_camera_render()
+        else:
+            # Hide panel.
+            if self.right_camera_wrap.winfo_ismapped():
+                self.right_camera_wrap.pack_forget()
+            self.camera_label = None
 
     # --- Settings dialog ---
     def _open_settings(self):
@@ -1858,11 +1898,19 @@ class AgentWindow:
                     "camera_zone_h": zone_state["h"],
                 }
                 save_config_partial(updates)
+                # Update cfg trong window để _apply_camera_panel_visibility đọc đúng
+                self.cfg["input_source"] = new_src
+                self.cfg["camera_source"] = new_cam
+                self.cfg["camera_zone_x"] = zone_state["x"]
+                self.cfg["camera_zone_y"] = zone_state["y"]
+                self.cfg["camera_zone_w"] = zone_state["w"]
+                self.cfg["camera_zone_h"] = zone_state["h"]
                 dlg.destroy()
-                # Restart camera + notify
+                # Restart camera + notify + apply UI show/hide.
                 restart = self.state.get("restart_camera")
                 if restart:
                     cam = restart()
+                    self._apply_camera_panel_visibility()
                     if new_src in ("camera", "both") and cam is None:
                         messagebox.showwarning(
                             "Không mở được camera",
