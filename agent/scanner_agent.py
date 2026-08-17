@@ -1368,11 +1368,11 @@ class AgentWindow:
         dlg.configure(bg=self.PANEL)
         dlg.transient(self.root)
         dlg.grab_set()
-        dlg.geometry("560x620")
+        dlg.geometry("560x820")
         dlg.resizable(False, True)
         dlg.update_idletasks()
         x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 280
-        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 310
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 410
         dlg.geometry(f"+{max(x, 20)}+{max(y, 20)}")
 
         tk.Label(dlg, text="⚙ Cài đặt nguồn quét mã",
@@ -1561,33 +1561,209 @@ class AgentWindow:
 
         _switch_form()  # init view
 
-        # --- Reading zone: 4 slider tuỳ chỉnh x/y/w/h ---
-        tk.Label(cam_frame, text="Reading zone (kẻ ô vị trí quét, % của frame):",
-                 fg="#94a3b8", bg=self.PANEL, font=("Segoe UI", 9, "bold")
-                 ).pack(anchor="w", padx=10, pady=(4, 2))
-        zone_vars = {}
-        for key, label, default_getter, max_v in [
-            ("camera_zone_x", "X (từ trái)", lambda: self.cfg.get("camera_zone_x", 0) or 20, 90),
-            ("camera_zone_y", "Y (từ trên)", lambda: self.cfg.get("camera_zone_y", 0) or 20, 90),
-            ("camera_zone_w", "Rộng", lambda: self.cfg.get("camera_zone_w", 0) or 60, 100),
-            ("camera_zone_h", "Cao", lambda: self.cfg.get("camera_zone_h", 0) or 60, 100),
-        ]:
-            row = tk.Frame(cam_frame, bg=self.PANEL)
-            row.pack(fill="x", padx=10, pady=1)
-            var = tk.IntVar(value=int(default_getter()))
-            zone_vars[key] = var
-            tk.Label(row, text=label, fg="#94a3b8", bg=self.PANEL,
-                     font=("Segoe UI", 8), width=12, anchor="w").pack(side="left")
-            val_lbl = tk.Label(row, text=f"{var.get()}%", fg="#e2e8f0", bg=self.PANEL,
-                               font=("Segoe UI", 8, "bold"), width=5)
-            val_lbl.pack(side="right")
-            def _make_cb(lbl):
-                return lambda v: lbl.config(text=f"{int(float(v))}%")
-            tk.Scale(row, from_=0, to=max_v, resolution=1,
-                     orient="horizontal", variable=var, showvalue=0,
-                     bg=self.PANEL, fg="#e2e8f0", troughcolor=self.BG,
-                     highlightthickness=0, length=280,
-                     command=_make_cb(val_lbl)).pack(side="left", fill="x", expand=True, padx=(6, 6))
+        # --- Preview live + drag-to-draw reading zone ---
+        prev_frame = tk.LabelFrame(dlg, text=" Kẻ vùng quét (click + kéo chuột trên preview) ",
+                                    fg="#e2e8f0", bg=self.PANEL,
+                                    font=("Segoe UI", 10, "bold"), bd=1, relief="solid")
+        prev_frame.pack(fill="x", padx=16, pady=(0, 10))
+
+        # Zone hiện tại (percent 0-100) — khởi từ config, default 20/20/60/60.
+        _zx = int(self.cfg.get("camera_zone_x", 0)) or 20
+        _zy = int(self.cfg.get("camera_zone_y", 0)) or 20
+        _zw = int(self.cfg.get("camera_zone_w", 0)) or 60
+        _zh = int(self.cfg.get("camera_zone_h", 0)) or 60
+        zone_state = {"x": _zx, "y": _zy, "w": _zw, "h": _zh,
+                      "drag_start": None, "drag_end": None, "drawing": False}
+
+        # Canvas 480×270 (16:9) — hiển thị video preview + zone overlay.
+        PREV_W, PREV_H = 480, 270
+        preview = tk.Canvas(prev_frame, width=PREV_W, height=PREV_H,
+                            bg="#000", highlightthickness=1, highlightbackground="#334155",
+                            cursor="crosshair")
+        preview.pack(padx=10, pady=(6, 4))
+
+        # Info + reset button
+        info_row = tk.Frame(prev_frame, bg=self.PANEL)
+        info_row.pack(fill="x", padx=10, pady=(0, 6))
+        zone_info_lbl = tk.Label(info_row,
+                                  text=f"Zone: X={_zx}% Y={_zy}% W={_zw}% H={_zh}%",
+                                  fg="#94a3b8", bg=self.PANEL, font=("Consolas", 9))
+        zone_info_lbl.pack(side="left")
+
+        def _reset_zone():
+            zone_state.update({"x": 20, "y": 20, "w": 60, "h": 60})
+            zone_info_lbl.config(text="Zone: X=20% Y=20% W=60% H=60%")
+
+        tk.Button(info_row, text="↺ Reset zone", command=_reset_zone,
+                  bg="#334155", fg="#e2e8f0", relief="flat",
+                  font=("Segoe UI", 8), padx=8, pady=2).pack(side="right")
+
+        tk.Label(prev_frame,
+                 text="💡 Đặt kiện hàng vào frame → click và kéo chuột trên video để vẽ vùng quét.",
+                 fg="#64748b", bg=self.PANEL, font=("Segoe UI", 8),
+                 wraplength=460, justify="left").pack(anchor="w", padx=10, pady=(0, 6))
+
+        # State cho preview polling
+        preview_state = {
+            "cap": None,           # cv2.VideoCapture (test-only, không lấy từ scanner đang chạy)
+            "photo": None,         # PhotoImage giữ ref
+            "after_id": None,
+            "last_source": None,   # source hiện đang preview (đổi source -> reopen)
+        }
+
+        def _get_active_source() -> str:
+            """Build source string từ form đang chọn."""
+            t = cam_type_var.get()
+            if t == "webcam":
+                return str(webcam_idx_var.get())
+            if t == "hikvision":
+                return _build_hik_url()
+            return custom_url_var.get().strip() or "0"
+
+        def _open_preview_cap(src):
+            """Mở VideoCapture riêng cho preview (không đụng scanner đang chạy)."""
+            try:
+                import cv2 as _cv2
+                try:
+                    src_int = int(src)
+                    backend = _cv2.CAP_DSHOW if hasattr(_cv2, "CAP_DSHOW") else 0
+                    cap = _cv2.VideoCapture(src_int, backend)
+                except ValueError:
+                    cap = _cv2.VideoCapture(src)
+                if not cap.isOpened():
+                    cap.release()
+                    return None
+                return cap
+            except Exception as ex:
+                print(f"[preview] open error: {ex}")
+                return None
+
+        def _close_preview_cap():
+            if preview_state["cap"]:
+                try:
+                    preview_state["cap"].release()
+                except Exception:
+                    pass
+                preview_state["cap"] = None
+
+        def _draw_zone_overlay(canvas_w, canvas_h):
+            """Vẽ zone dashed vàng lên canvas theo zone_state (percent)."""
+            preview.delete("zone")
+            preview.delete("zone_label")
+            preview.delete("draw_preview")
+            zs = zone_state
+            # Nếu đang kéo -> vẽ zone tạm theo drag_start/drag_end (pixel canvas).
+            if zs["drawing"] and zs["drag_start"] and zs["drag_end"]:
+                x1, y1 = zs["drag_start"]
+                x2, y2 = zs["drag_end"]
+                preview.create_rectangle(min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2),
+                                          outline="#fbbf24", dash=(6, 4), width=2,
+                                          tags="draw_preview")
+                return
+            # Vẽ zone đã confirm theo percent.
+            x = int(zs["x"] * canvas_w / 100)
+            y = int(zs["y"] * canvas_h / 100)
+            w = int(zs["w"] * canvas_w / 100)
+            h = int(zs["h"] * canvas_h / 100)
+            preview.create_rectangle(x, y, x + w, y + h,
+                                      outline="#fbbf24", dash=(8, 4), width=2, tags="zone")
+            preview.create_text(x + 4, y - 8, text="READING ZONE",
+                                 anchor="nw", fill="#fbbf24",
+                                 font=("Segoe UI", 8, "bold"), tags="zone_label")
+
+        def _tick_preview():
+            """Poll frame từ camera → render lên canvas + overlay zone."""
+            src = _get_active_source()
+            # Nếu source đổi → reopen cap
+            if preview_state["last_source"] != src:
+                _close_preview_cap()
+                preview_state["last_source"] = src
+                preview_state["cap"] = _open_preview_cap(src)
+            cap = preview_state["cap"]
+            if cap is not None:
+                try:
+                    ret, frame = cap.read()
+                    if ret and frame is not None:
+                        import cv2 as _cv2
+                        frame = _cv2.resize(frame, (PREV_W, PREV_H))
+                        rgb = _cv2.cvtColor(frame, _cv2.COLOR_BGR2RGB)
+                        img = _PILImage.fromarray(rgb)
+                        preview_state["photo"] = ImageTk.PhotoImage(img)
+                        preview.delete("bg")
+                        preview.create_image(0, 0, image=preview_state["photo"],
+                                              anchor="nw", tags="bg")
+                    else:
+                        preview.delete("bg")
+                        preview.create_text(PREV_W // 2, PREV_H // 2,
+                                             text="Chưa đọc được frame\n(kiểm tra kết nối)",
+                                             fill="#94a3b8", font=("Segoe UI", 10),
+                                             justify="center", tags="bg")
+                except Exception as ex:
+                    print(f"[preview] read error: {ex}")
+            else:
+                preview.delete("bg")
+                preview.create_text(PREV_W // 2, PREV_H // 2,
+                                     text=f"Không mở được camera\n{src[:60]}",
+                                     fill="#94a3b8", font=("Segoe UI", 10),
+                                     justify="center", tags="bg")
+            # Overlay zone LÊN TRÊN video (raise sau khi tạo image bg)
+            _draw_zone_overlay(PREV_W, PREV_H)
+            preview_state["after_id"] = dlg.after(200, _tick_preview)  # 5 fps preview
+
+        # Drag-to-draw handlers
+        def _on_press(e):
+            zone_state["drag_start"] = (e.x, e.y)
+            zone_state["drag_end"] = (e.x, e.y)
+            zone_state["drawing"] = True
+
+        def _on_drag(e):
+            if not zone_state["drawing"]:
+                return
+            zone_state["drag_end"] = (max(0, min(PREV_W, e.x)),
+                                      max(0, min(PREV_H, e.y)))
+
+        def _on_release(e):
+            if not zone_state["drawing"]:
+                return
+            zone_state["drawing"] = False
+            x1, y1 = zone_state["drag_start"]
+            x2, y2 = zone_state["drag_end"]
+            # Tính rect
+            rx, ry = min(x1, x2), min(y1, y2)
+            rw, rh = abs(x2 - x1), abs(y2 - y1)
+            # Nếu kéo quá nhỏ (<20px) -> bỏ qua, giữ zone cũ.
+            if rw < 20 or rh < 20:
+                zone_info_lbl.config(text=f"Zone: X={zone_state['x']}% Y={zone_state['y']}% "
+                                           f"W={zone_state['w']}% H={zone_state['h']}% "
+                                           f"(quá nhỏ, giữ nguyên)")
+                return
+            # Convert pixel -> percent
+            zone_state["x"] = int(rx * 100 / PREV_W)
+            zone_state["y"] = int(ry * 100 / PREV_H)
+            zone_state["w"] = int(rw * 100 / PREV_W)
+            zone_state["h"] = int(rh * 100 / PREV_H)
+            zone_info_lbl.config(text=f"Zone: X={zone_state['x']}% Y={zone_state['y']}% "
+                                       f"W={zone_state['w']}% H={zone_state['h']}%")
+
+        preview.bind("<ButtonPress-1>", _on_press)
+        preview.bind("<B1-Motion>", _on_drag)
+        preview.bind("<ButtonRelease-1>", _on_release)
+
+        # Cleanup khi đóng dialog
+        _orig_destroy = dlg.destroy
+        def _cleanup_destroy():
+            if preview_state["after_id"]:
+                try:
+                    dlg.after_cancel(preview_state["after_id"])
+                except Exception:
+                    pass
+            _close_preview_cap()
+            _orig_destroy()
+        dlg.destroy = _cleanup_destroy
+        dlg.protocol("WM_DELETE_WINDOW", _cleanup_destroy)
+
+        # Start preview polling
+        _tick_preview()
 
         # --- Buttons ---
         btns = tk.Frame(dlg, bg=self.PANEL)
@@ -1607,10 +1783,10 @@ class AgentWindow:
                 updates = {
                     "input_source": new_src,
                     "camera_source": new_cam,
-                    "camera_zone_x": zone_vars["camera_zone_x"].get(),
-                    "camera_zone_y": zone_vars["camera_zone_y"].get(),
-                    "camera_zone_w": zone_vars["camera_zone_w"].get(),
-                    "camera_zone_h": zone_vars["camera_zone_h"].get(),
+                    "camera_zone_x": zone_state["x"],
+                    "camera_zone_y": zone_state["y"],
+                    "camera_zone_w": zone_state["w"],
+                    "camera_zone_h": zone_state["h"],
                 }
                 save_config_partial(updates)
                 dlg.destroy()
