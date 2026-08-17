@@ -435,7 +435,9 @@ def load_config():
     if not os.path.exists(CONFIG_PATH):
         print(f"Chưa có {CONFIG_PATH}. Hãy copy config.ini.example -> config.ini và điền.")
         sys.exit(1)
-    cfg = configparser.ConfigParser()
+    # RawConfigParser: KHÔNG interpolate '%' -> cho phép RTSP URL với password
+    # có ký tự đặc biệt encoded như 'Mylove86%40' (%40 = @).
+    cfg = configparser.RawConfigParser()
     cfg.read(CONFIG_PATH, encoding="utf-8")
     return {
         "url": cfg.get("server", "url").rstrip("/"),
@@ -467,7 +469,9 @@ def save_config_partial(updates: dict):
     updates: dict phẳng, keys có prefix section (VD "input_source", "camera_source").
     Dùng từ Settings dialog để lưu thay đổi.
     """
-    cfg = configparser.ConfigParser()
+    # RawConfigParser: KHÔNG interpolate '%' -> cho phép RTSP URL với password
+    # có ký tự đặc biệt encoded như 'Mylove86%40' (%40 = @).
+    cfg = configparser.RawConfigParser()
     if os.path.exists(CONFIG_PATH):
         cfg.read(CONFIG_PATH, encoding="utf-8")
     # Map key -> (section, option)
