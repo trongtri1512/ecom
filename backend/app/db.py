@@ -95,9 +95,61 @@ def _run_light_migrations():
             to_add.append("ALTER TABLE carrier_rules ADD COLUMN ops_template_id INTEGER NOT NULL DEFAULT 2")
         if "ops_partner" not in cols:
             to_add.append("ALTER TABLE carrier_rules ADD COLUMN ops_partner VARCHAR(128) NOT NULL DEFAULT ''")
+    # --- Fix cột ops_errors_json: VARCHAR(8000) -> TEXT (chỉ Postgres) ---
+    # Trước đây code cắt [:8000] giữa chuỗi JSON gây "Unterminated string"
+    # khi loads lại -> _force_auto_import_all crash -> auto-import không chạy.
+    # Đổi sang TEXT để không bao giờ bị giới hạn độ dài ở tầng DB.
+    is_postgres = engine.dialect.name == "postgresql"
+    if is_postgres and "baskets" in tables:
+        try:
+            col = next((c for c in inspector.get_columns("baskets")
+                        if c["name"] == "ops_errors_json"), None)
+            # SQLAlchemy trả type; chỉ ALTER nếu còn là VARCHAR (có length).
+            if col is not None and getattr(col["type"], "length", None):
+                to_add.append("ALTER TABLE baskets ALTER COLUMN ops_errors_json TYPE TEXT")
+        except Exception as _e:
+            print(f"[migrate] skip ops_errors_json TYPE check: {_e}")
+
     if not to_add:
+        # Vẫn cần chạy bước sửa data hỏng (không phụ thuộc to_add).
+        _repair_broken_ops_errors_json()
         return
     with engine.begin() as conn:
         for stmt in to_add:
             conn.execute(text(stmt))
             print(f"[migrate] {stmt}")
+    # Sau khi ALTER xong, sửa các dòng JSON đã hỏng do bug cắt [:8000] cũ.
+    _repair_broken_ops_errors_json()
+
+
+def _repair_broken_ops_errors_json():
+    """Reset ops_errors_json về '[]' cho các basket có JSON hỏng.
+
+    Bug cũ cắt [:8000] giữa chuỗi JSON -> json.loads raise. Đọc từng dòng,
+    thử parse, nếu fail thì set lại '[]' (chỉ mất log lỗi chi tiết, không
+    ảnh hưởng mã đã import — session_id nằm ở ops_sessions_json riêng)."""
+    import json as _json
+    fixed = 0
+    try:
+        with engine.begin() as conn:
+            # Dùng raw để không phụ thuộc session; đọc id + json.
+            rows = conn.execute(text(
+                "SELECT id, ops_errors_json FROM baskets "
+                "WHERE ops_errors_json IS NOT NULL AND ops_errors_json <> '[]'"
+            )).fetchall()
+            for row in rows:
+                bid, raw = row[0], row[1]
+                if not raw:
+                    continue
+                try:
+                    _json.loads(raw)
+                except Exception:
+                    conn.execute(
+                        text("UPDATE baskets SET ops_errors_json = '[]' WHERE id = :id"),
+                        {"id": bid},
+                    )
+                    fixed += 1
+        if fixed:
+            print(f"[migrate] repaired {fixed} basket(s) with broken ops_errors_json")
+    except Exception as e:
+        print(f"[migrate] _repair_broken_ops_errors_json error: {e}")

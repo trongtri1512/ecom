@@ -679,20 +679,28 @@ def _force_auto_import_all():
                             sess = {}
                         sess[carrier] = session_id
                         basket.ops_sessions_json = _json_fi.dumps(sess, ensure_ascii=False)
-                        if failed_details:
-                            try:
-                                errs = _json_fi.loads(basket.ops_errors_json or "[]")
-                            except Exception:
+                        # Đọc errors cũ (try/except vì data cũ có thể hỏng do
+                        # từng bị cắt [:8000] giữa chuỗi JSON -> unterminated).
+                        try:
+                            errs = _json_fi.loads(basket.ops_errors_json or "[]")
+                            if not isinstance(errs, list):
                                 errs = []
+                        except Exception:
+                            errs = []
+                        if failed_details:
                             for fd in failed_details:
                                 errs.append({"code": fd.get("code", "-"), "carrier": carrier,
                                               "reason": fd.get("reason", "OPS loại")})
-                            basket.ops_errors_json = _json_fi.dumps(errs, ensure_ascii=False)[:8000]
+                        # Giới hạn AN TOÀN theo SỐ PHẦN TỬ (không cắt giữa chuỗi
+                        # JSON như [:8000] cũ -> tránh JSONDecodeError lần sau).
+                        if len(errs) > 200:
+                            errs = errs[-200:]
+                        basket.ops_errors_json = _json_fi.dumps(errs, ensure_ascii=False)
                         scans_in_basket = db.scalars(select(Scan).where(Scan.basket_id == bid)).all()
                         carriers_in_basket = {s.carrier for s in scans_in_basket}
                         covered = set(sess.keys()) & carriers_in_basket
                         remaining = carriers_in_basket - covered
-                        total_errors = len(_json_fi.loads(basket.ops_errors_json or "[]"))
+                        total_errors = len(errs)  # dùng list trong RAM, không loads lại
                         if not remaining:
                             basket.ops_status = "partial" if total_errors > 0 else "done"
                         else:
@@ -981,9 +989,16 @@ def ops_import_basket(
     basket.ops_sessions_json = _json_bh.dumps(old_sess, ensure_ascii=False)
     try:
         old_err = _json_bh.loads(basket.ops_errors_json or "[]")
+        if not isinstance(old_err, list):
+            old_err = []
     except Exception:
         old_err = []
-    basket.ops_errors_json = _json_bh.dumps(old_err + basket_errors, ensure_ascii=False)[:8000]
+    merged_err = old_err + basket_errors
+    # Giới hạn AN TOÀN theo SỐ PHẦN TỬ (không cắt giữa chuỗi JSON -> tránh
+    # JSONDecodeError "Unterminated string" lần sau khi loads lại).
+    if len(merged_err) > 200:
+        merged_err = merged_err[-200:]
+    basket.ops_errors_json = _json_bh.dumps(merged_err, ensure_ascii=False)
     db.commit()
     events.publish("basket_close", basket.as_dict())  # frontend refresh
 

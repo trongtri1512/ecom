@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import DateTime, Integer, String
+from sqlalchemy import DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -83,7 +83,10 @@ class Basket(Base):
     # {"SPX": "MVECCE...", "J&T": "JTECCE..."}).
     ops_sessions_json: Mapped[str] = mapped_column(String(2000), nullable=False, default="{}")
     # Nhật ký chi tiết mã lỗi: [{"code": "...", "reason": "đã tồn tại"}, ...].
-    ops_errors_json: Mapped[str] = mapped_column(String(8000), nullable=False, default="[]")
+    # Text (không giới hạn) — trước dùng String(8000) + code cắt [:8000] giữa
+    # chuỗi JSON gây "Unterminated string" khi loads lại. Giờ giới hạn theo số
+    # phần tử (200) ở tầng code, DB dùng Text cho an toàn.
+    ops_errors_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     # True = user đã bấm "Hoàn thành sọt" (close_basket). False = sọt đang mở,
     # mã vẫn có thể quét thêm. Cần để phân biệt trong /api/baskets (chỉ trả
     # is_closed=True) vì lúc _upsert tạo sọt closed_at đã default = now.
